@@ -84,6 +84,20 @@ pub trait Host: Send + Sync + 'static {
         drop(progress);
         Err("이 화면에서는 소스 동기화를 지원하지 않습니다".into())
     }
+    /// Editable settings of this project (JSON view of `mwa.toml`).
+    fn settings(&self) -> Result<serde_json::Value, String> {
+        Err("이 화면에서는 설정을 지원하지 않습니다".into())
+    }
+    /// Validates and saves settings. The server reopens the project afterwards.
+    fn save_settings(&self, settings: serde_json::Value) -> Result<(), String> {
+        drop(settings);
+        Err("이 화면에서는 설정을 지원하지 않습니다".into())
+    }
+    /// Stores a login profile's password in the user's credential file (never in the project).
+    fn set_password(&self, profile: &str, password: &str) -> Result<(), String> {
+        let _ = (profile, password);
+        Err("이 화면에서는 비밀번호 저장을 지원하지 않습니다".into())
+    }
     /// A capture or generation is running; switching projects must wait.
     fn busy(&self) -> bool {
         false

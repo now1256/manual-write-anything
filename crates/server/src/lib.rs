@@ -53,6 +53,12 @@ impl Hub {
         self.host.read().expect("hub lock").clone()
     }
 
+    /// Reopens the current project so saved settings take effect.
+    fn reload(&self) -> Result<(), String> {
+        let current = self.host().header().workspace;
+        self.open(&current)
+    }
+
     fn open(&self, path: &str) -> Result<(), String> {
         let projects = self
             .projects
@@ -83,6 +89,8 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
         .route("/api/shots/file/{*path}", get(shot_file))
         .route("/api/chat-model", axum::routing::post(set_chat_model))
         .route("/api/projects", get(projects).post(create_project))
+        .route("/api/settings", get(settings).put(save_settings))
+        .route("/api/settings/password", axum::routing::post(set_password))
         .route("/api/projects/open", axum::routing::post(open_project))
         .route("/api/ws", get(ws::upgrade));
     let app = match web_dir {
@@ -280,6 +288,42 @@ struct OpenProject {
 async fn open_project(State(hub): State<Arc<Hub>>, Json(body): Json<OpenProject>) -> Response {
     match hub.open(body.path.trim()) {
         Ok(()) => Json(json!({ "current": hub.host().header().workspace })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn settings(State(hub): State<Arc<Hub>>) -> Response {
+    match hub.host().settings() {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn save_settings(
+    State(hub): State<Arc<Hub>>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    if let Err(e) = hub.host().save_settings(body) {
+        return bad_request(&e);
+    }
+    let note = match hub.reload() {
+        Ok(()) => "저장하고 다시 불러왔습니다".to_string(),
+        Err(e) => format!("저장했습니다. 다시 불러오지 못해 서버를 다시 켜야 반영됩니다: {e}"),
+    };
+    Json(json!({ "note": note })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PasswordBody {
+    profile: String,
+    password: String,
+}
+
+async fn set_password(State(hub): State<Arc<Hub>>, Json(body): Json<PasswordBody>) -> Response {
+    match hub.host().set_password(&body.profile, &body.password) {
+        Ok(()) => {
+            Json(json!({ "note": "저장했습니다 (사용자 자격 파일, 권한 600)" })).into_response()
+        }
         Err(e) => bad_request(&e),
     }
 }

@@ -13,6 +13,7 @@ import {
 } from "./api";
 import { HELP_LINES, COMMANDS } from "./commands";
 import ProjectSwitcher from "./components/ProjectSwitcher";
+import SettingsView from "./components/SettingsView";
 import Sidebar from "./components/Sidebar";
 import FeatureView from "./components/FeatureView";
 import Overview from "./components/Overview";
@@ -23,6 +24,7 @@ let nextId = 1;
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [map, setMap] = useState<ProductMap | null>(null);
   const [shots, setShots] = useState<ShotsManifest | null>(null);
   const [manualVersion, setManualVersion] = useState(0);
@@ -180,6 +182,9 @@ export default function App() {
       <header className="topbar">
         <span className="brand">mwa</span>
         <ProjectSwitcher current={state?.header.workspace ?? null} />
+        <button className={`topbar-button ${showSettings ? "active" : ""}`} onClick={() => setShowSettings((v) => !v)}>
+          설정
+        </button>
         <span className="spacer" />
         {state?.header.sources.map((s) => (
           <span key={s.name} className="source">
@@ -189,10 +194,12 @@ export default function App() {
         ))}
       </header>
       <Sidebar map={map} selected={selected} onSelect={setSelected} />
-      <main className={`content ${chatOpen ? "" : "chat-collapsed"}`}>
+      <main className={`content ${chatOpen && !showSettings ? "" : "chat-collapsed"}`}>
         <section className="detail">
           {loadError ? (
             <div className="empty error">서버에서 정보를 불러오지 못했습니다: {loadError}</div>
+          ) : showSettings ? (
+            <SettingsView onClose={() => setShowSettings(false)} onCommand={runCommand} />
           ) : feature ? (
             <FeatureView
               feature={feature}

@@ -143,6 +143,36 @@ impl Host for CliHost {
         Ok((map, lines))
     }
 
+    fn settings(&self) -> Result<serde_json::Value, String> {
+        let s = crate::settings::read(&self.ws)?;
+        serde_json::to_value(s).map_err(|e| e.to_string())
+    }
+
+    fn save_settings(&self, settings: serde_json::Value) -> Result<(), String> {
+        if self.busy() {
+            return Err("촬영이나 매뉴얼 생성이 끝난 뒤에 저장하세요".into());
+        }
+        let s: crate::settings::Settings =
+            serde_json::from_value(settings).map_err(|e| format!("설정 형식 오류: {e}"))?;
+        crate::settings::save(&self.ws, &s)
+    }
+
+    fn set_password(&self, profile: &str, password: &str) -> Result<(), String> {
+        use mwa_capture::creds::{CredStore, key};
+        let p =
+            self.cfg.profiles.get(profile).ok_or_else(|| {
+                format!("프로파일 '{profile}'이 없습니다. 먼저 설정을 저장하세요")
+            })?;
+        if password.is_empty() {
+            return Err("비밀번호가 비어 있습니다".into());
+        }
+        let mut store = CredStore::default_path()
+            .and_then(|path| CredStore::open(&path))
+            .map_err(|e| e.to_string())?;
+        store.set_password(&key(&p.user_id, &p.base_url), password.to_string());
+        store.save().map_err(|e| e.to_string())
+    }
+
     async fn sync_sources(&self, progress: OnDelta) -> Result<Vec<String>, String> {
         let cfg = self.cfg.clone();
         tokio::task::spawn_blocking(move || crate::sync_sources(&cfg, |l| progress(&l)))

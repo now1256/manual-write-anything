@@ -9,6 +9,7 @@ use mwa_source::{Snapshot, snapshot_local};
 use serde_json::{Value, json};
 
 mod projects;
+mod settings;
 mod tui_host;
 
 const CONFIG_FILE: &str = "mwa.toml";

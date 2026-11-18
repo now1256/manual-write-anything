@@ -244,6 +244,37 @@ export interface ProjectList {
 
 export const fetchProjects = () => getJson<ProjectList>("/api/projects");
 
+export interface Settings {
+  sources: { name: string; path: string; git: string; branch: string }[];
+  product: { name: string; adapter: string; frontend: string; backend: string; openapi: string } | null;
+  profiles: { name: string; base_url: string; user_id: string; purpose: string }[];
+  capture: { profile: string; domain: string; viewport: [number, number]; scale: number } | null;
+  roles: { role: string; backend: string; model: string; uses: string }[];
+  backends: string[];
+  max_usd_per_run: number;
+}
+
+export async function fetchSettings(): Promise<Settings> {
+  const s = await getJson<Settings>("/api/settings");
+  if (!s) throw new Error("설정이 없습니다");
+  return s;
+}
+
+/** Saves mwa.toml (validated by the engine) and reloads the project on the server. */
+export async function saveSettings(s: Settings): Promise<{ note: string }> {
+  const res = await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(s),
+  });
+  const data = (await res.json().catch(() => ({}))) as { note?: string; error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return { note: data.note ?? "저장했습니다" };
+}
+
+export const setPassword = (profile: string, password: string) =>
+  postJson<{ note: string }>("/api/settings/password", { profile, password });
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
