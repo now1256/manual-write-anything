@@ -222,6 +222,11 @@ impl Host for CliHost {
         mwa_capture::menus::shot_file(&self.ws, rel)
     }
 
+    fn busy(&self) -> bool {
+        self.capturing.load(std::sync::atomic::Ordering::SeqCst)
+            || self.generating.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn auth_lines(&self) -> Vec<String> {
         match mwa_capture::creds::CredStore::default_path()
             .and_then(|p| mwa_capture::creds::CredStore::open(&p))

@@ -12,6 +12,7 @@ import {
   type Who,
 } from "./api";
 import { HELP_LINES, COMMANDS } from "./commands";
+import ProjectSwitcher from "./components/ProjectSwitcher";
 import Sidebar from "./components/Sidebar";
 import FeatureView from "./components/FeatureView";
 import Overview from "./components/Overview";
@@ -178,7 +179,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <span className="brand">mwa</span>
-        <span className="muted mono">{state?.header.workspace ?? "…"}</span>
+        <ProjectSwitcher current={state?.header.workspace ?? null} />
         <span className="spacer" />
         {state?.header.sources.map((s) => (
           <span key={s.name} className="source">

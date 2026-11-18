@@ -228,6 +228,40 @@ export function shotUrl(file: string, sha: string | null): string {
   return `/api/shots/file/${rel}${sha ? `?v=${sha.slice(0, 12)}` : ""}`;
 }
 
+export interface ProjectEntry {
+  name: string;
+  path: string;
+  /** The folder still has a mwa.toml. */
+  ready: boolean;
+  last_opened: number | null;
+}
+
+export interface ProjectList {
+  current: string;
+  items: ProjectEntry[];
+  switchable: boolean;
+}
+
+export const fetchProjects = () => getJson<ProjectList>("/api/projects");
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+/** Creates a project folder (default location when `path` is empty). */
+export const createProject = (name: string, path?: string) =>
+  postJson<ProjectEntry>("/api/projects", { name, path: path || null });
+
+/** Switches the engine to another project; the page should reload afterwards. */
+export const openProject = (path: string) => postJson<{ current: string }>("/api/projects/open", { path });
+
 /** Switches the chat model for this server session; returns the new status. */
 export async function setChatModel(model: string): Promise<Status> {
   const res = await fetch("/api/chat-model", {

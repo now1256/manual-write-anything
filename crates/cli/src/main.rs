@@ -8,6 +8,7 @@ use mwa_protocol::{Config, Request, Role};
 use mwa_source::{Snapshot, snapshot_local};
 use serde_json::{Value, json};
 
+mod projects;
 mod tui_host;
 
 const CONFIG_FILE: &str = "mwa.toml";
@@ -302,6 +303,12 @@ async fn serve(
     web_dir: Option<PathBuf>,
 ) -> Result<ExitCode> {
     let host = std::sync::Arc::new(tui_host::CliHost::open(ws)?);
+    let registry = projects::Registry::new(&projects::data_dir());
+    let ws_abs = std::fs::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
+    if let Err(e) = registry.touch(&ws_abs, None) {
+        eprintln!("경고: 프로젝트 목록에 등록하지 못했습니다: {e}");
+    }
+    let hub = mwa_server::Hub::new(host, Some(std::sync::Arc::new(registry)));
     let listener = mwa_server::bind(addr).await?;
     let port = listener.local_addr()?.port();
     println!("mwa serve: http://{addr}");
@@ -311,7 +318,7 @@ async fn serve(
     if let Some(d) = &web_dir {
         println!("화면 폴더(개발 모드): {}", d.display());
     }
-    mwa_server::serve_listener(listener, host, web_dir).await?;
+    mwa_server::serve_listener(listener, hub, web_dir).await?;
     Ok(ExitCode::SUCCESS)
 }
 

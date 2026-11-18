@@ -9,7 +9,10 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{ClientMsg, ServerMsg};
 
-pub async fn upgrade(ws: WebSocketUpgrade, State(host): State<Arc<dyn Host>>) -> Response {
+pub async fn upgrade(ws: WebSocketUpgrade, State(hub): State<Arc<crate::Hub>>) -> Response {
+    // A session stays with the project that was open when it connected; the UI reloads
+    // after switching projects.
+    let host = hub.host();
     ws.on_upgrade(move |socket| session(socket, host))
 }
 

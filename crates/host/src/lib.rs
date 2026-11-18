@@ -40,6 +40,27 @@ pub enum Who {
 
 pub type OnDelta = Box<dyn Fn(&str) + Send + Sync>;
 
+/// One project the user has created or opened.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEntry {
+    pub name: String,
+    /// Project folder (holds `mwa.toml`).
+    pub path: String,
+    /// The folder still has a `mwa.toml`.
+    pub ready: bool,
+    /// Unix milliseconds.
+    pub last_opened: Option<u64>,
+}
+
+/// The list of projects and how to open one; implemented by the CLI.
+pub trait Projects: Send + Sync + 'static {
+    fn list(&self) -> Vec<ProjectEntry>;
+    /// Creates a project folder (default location when `path` is `None`) and registers it.
+    fn create(&self, name: &str, path: Option<&str>) -> Result<ProjectEntry, String>;
+    /// Opens an existing project folder and registers it as most recently used.
+    fn open(&self, path: &str) -> Result<std::sync::Arc<dyn Host>, String>;
+}
+
 #[async_trait]
 pub trait Host: Send + Sync + 'static {
     fn header(&self) -> Header;
@@ -58,6 +79,10 @@ pub trait Host: Send + Sync + 'static {
     async fn build_map(&self) -> Result<(ProductMap, Vec<String>), String>;
     async fn doctor(&self) -> Vec<String>;
     fn auth_lines(&self) -> Vec<String>;
+    /// A capture or generation is running; switching projects must wait.
+    fn busy(&self) -> bool {
+        false
+    }
     /// Models the chat role can switch to (empty = no choice).
     fn chat_models(&self) -> Vec<String> {
         Vec::new()

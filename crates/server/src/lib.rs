@@ -15,7 +15,7 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use axum::routing::get_service;
-use mwa_host::Host;
+use mwa_host::{Host, Projects};
 use rust_embed::RustEmbed;
 use serde_json::json;
 
@@ -35,13 +35,45 @@ pub enum ServeError {
     Io(#[from] std::io::Error),
 }
 
+/// The open project's engine, swappable when the user switches projects.
+pub struct Hub {
+    host: std::sync::RwLock<Arc<dyn Host>>,
+    projects: Option<Arc<dyn Projects>>,
+}
+
+impl Hub {
+    pub fn new(host: Arc<dyn Host>, projects: Option<Arc<dyn Projects>>) -> Arc<Self> {
+        Arc::new(Self {
+            host: std::sync::RwLock::new(host),
+            projects,
+        })
+    }
+
+    pub fn host(&self) -> Arc<dyn Host> {
+        self.host.read().expect("hub lock").clone()
+    }
+
+    fn open(&self, path: &str) -> Result<(), String> {
+        let projects = self
+            .projects
+            .as_ref()
+            .ok_or("프로젝트 전환을 지원하지 않습니다")?;
+        if self.host().busy() {
+            return Err("촬영이나 매뉴얼 생성이 진행 중입니다. 끝난 뒤에 전환하세요".into());
+        }
+        let host = projects.open(path)?;
+        *self.host.write().expect("hub lock") = host;
+        Ok(())
+    }
+}
+
 pub fn router(host: Arc<dyn Host>) -> Router {
-    router_with(host, None)
+    router_with(Hub::new(host, None), None)
 }
 
 /// With `web_dir`, the UI is read from disk on every request instead of the embedded copy,
 /// so a rebuilt UI shows up on browser refresh without restarting the server (development).
-pub fn router_with(host: Arc<dyn Host>, web_dir: Option<PathBuf>) -> Router {
+pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
     let api = Router::new()
         .route("/api/state", get(state))
         .route("/api/map", get(map))
@@ -50,6 +82,8 @@ pub fn router_with(host: Arc<dyn Host>, web_dir: Option<PathBuf>) -> Router {
         .route("/api/manual/{key}", get(manual))
         .route("/api/shots/file/{*path}", get(shot_file))
         .route("/api/chat-model", axum::routing::post(set_chat_model))
+        .route("/api/projects", get(projects).post(create_project))
+        .route("/api/projects/open", axum::routing::post(open_project))
         .route("/api/ws", get(ws::upgrade));
     let app = match web_dir {
         Some(dir) => api.fallback_service(get_service(axum::routing::any(move |uri: Uri| {
@@ -58,7 +92,7 @@ pub fn router_with(host: Arc<dyn Host>, web_dir: Option<PathBuf>) -> Router {
         }))),
         None => api.fallback(static_file),
     };
-    app.layer(middleware::from_fn(local_only)).with_state(host)
+    app.layer(middleware::from_fn(local_only)).with_state(hub)
 }
 
 /// Binds `addr` (loopback only) and serves until the process ends.
@@ -71,10 +105,10 @@ pub async fn serve(host: Arc<dyn Host>, addr: SocketAddr) -> Result<(), ServeErr
 /// Serves on an already bound listener (see [`bind`]).
 pub async fn serve_listener(
     listener: tokio::net::TcpListener,
-    host: Arc<dyn Host>,
+    hub: Arc<Hub>,
     web_dir: Option<PathBuf>,
 ) -> Result<(), ServeError> {
-    axum::serve(listener, router_with(host, web_dir)).await?;
+    axum::serve(listener, router_with(hub, web_dir)).await?;
     Ok(())
 }
 
@@ -129,7 +163,8 @@ async fn local_only(headers: HeaderMap, req: Request, next: Next) -> Response {
     }
 }
 
-async fn state(State(host): State<Arc<dyn Host>>) -> Json<serde_json::Value> {
+async fn state(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    let host = hub.host();
     Json(json!({
         "header": host.header(),
         "status": host.status(),
@@ -139,7 +174,8 @@ async fn state(State(host): State<Arc<dyn Host>>) -> Json<serde_json::Value> {
     }))
 }
 
-async fn map(State(host): State<Arc<dyn Host>>) -> Response {
+async fn map(State(hub): State<Arc<Hub>>) -> Response {
+    let host = hub.host();
     match host.load_map() {
         Some(m) => Json(m).into_response(),
         None => (
@@ -155,17 +191,16 @@ struct ModelChoice {
     model: String,
 }
 
-async fn set_chat_model(
-    State(host): State<Arc<dyn Host>>,
-    Json(body): Json<ModelChoice>,
-) -> Response {
+async fn set_chat_model(State(hub): State<Arc<Hub>>, Json(body): Json<ModelChoice>) -> Response {
+    let host = hub.host();
     match host.set_chat_model(&body.model) {
         Ok(()) => Json(json!({ "status": host.status() })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
 }
 
-async fn shots(State(host): State<Arc<dyn Host>>) -> Response {
+async fn shots(State(hub): State<Arc<Hub>>) -> Response {
+    let host = hub.host();
     match host.shots_manifest() {
         Some(m) => Json(m).into_response(),
         None => (
@@ -177,9 +212,10 @@ async fn shots(State(host): State<Arc<dyn Host>>) -> Response {
 }
 
 async fn manual(
-    State(host): State<Arc<dyn Host>>,
+    State(hub): State<Arc<Hub>>,
     axum::extract::Path(key): axum::extract::Path<String>,
 ) -> Response {
+    let host = hub.host();
     match host.manual_run(&key) {
         Some(m) => Json(m).into_response(),
         None => (
@@ -191,17 +227,65 @@ async fn manual(
 }
 
 async fn shot_file(
-    State(host): State<Arc<dyn Host>>,
+    State(hub): State<Arc<Hub>>,
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> Response {
+    let host = hub.host();
     match host.shot_file(&path).and_then(|p| std::fs::read(p).ok()) {
         Some(data) => file_response(&path, data),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-async fn auth(State(host): State<Arc<dyn Host>>) -> Json<serde_json::Value> {
+async fn auth(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    let host = hub.host();
     Json(json!({ "lines": host.auth_lines() }))
+}
+
+async fn projects(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    Json(json!({
+        "current": hub.host().header().workspace,
+        "items": hub.projects.as_ref().map(|p| p.list()).unwrap_or_default(),
+        "switchable": hub.projects.is_some(),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct NewProject {
+    name: String,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+async fn create_project(State(hub): State<Arc<Hub>>, Json(body): Json<NewProject>) -> Response {
+    let Some(projects) = hub.projects.clone() else {
+        return bad_request("프로젝트를 만들 수 없습니다");
+    };
+    let path = body
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty());
+    match projects.create(body.name.trim(), path) {
+        Ok(entry) => Json(entry).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct OpenProject {
+    path: String,
+}
+
+async fn open_project(State(hub): State<Arc<Hub>>, Json(body): Json<OpenProject>) -> Response {
+    match hub.open(body.path.trim()) {
+        Ok(()) => Json(json!({ "current": hub.host().header().workspace })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+fn bad_request(msg: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response()
 }
 
 fn file_response(path: &str, data: Vec<u8>) -> Response {

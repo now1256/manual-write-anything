@@ -1710,6 +1710,7 @@ dependencies = [
  "mwa-tui",
  "reqwest",
  "rpassword",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
