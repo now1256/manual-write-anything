@@ -106,6 +106,11 @@ enum Cmd {
         #[arg(long)]
         slice_only: bool,
     },
+    /// 제품 코드 소스(로컬 폴더·git)를 관리합니다
+    Sources {
+        #[command(subcommand)]
+        action: SourcesCmd,
+    },
     /// 상세 촬영용 가상 세계 데이터
     World {
         #[command(subcommand)]
@@ -130,6 +135,12 @@ enum Cmd {
         system: String,
         prompt: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SourcesCmd {
+    /// git으로 지정한 소스를 클론하거나 최신으로 맞춥니다 (mwa가 관리하는 사본이라 로컬 변경은 버립니다)
+    Sync,
 }
 
 #[derive(Subcommand)]
@@ -202,6 +213,21 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
             no_openapi,
         } => map(cli_workspace, openapi, no_openapi).await,
         Cmd::Auth { action } => auth(cli_workspace, action).await,
+        Cmd::Sources {
+            action: SourcesCmd::Sync,
+        } => {
+            let cfg = load_config(cli_workspace)?;
+            let lines = sync_sources(&cfg, |l| println!("{l}"))?;
+            let failed = lines.iter().any(|l| l.contains("실패"));
+            for l in lines {
+                println!("{l}");
+            }
+            Ok(if failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
         Cmd::World {
             action: WorldCmd::Shapes { features },
         } => world_shapes(cli_workspace, &features),
@@ -354,7 +380,11 @@ fn load_config_quiet(ws: &Path) -> Result<(Config, Vec<String>)> {
             path.display()
         )
     })?;
-    Config::parse(&text).with_context(|| format!("{} 설정 오류", path.display()))
+    let (mut cfg, warnings) =
+        Config::parse(&text).with_context(|| format!("{} 설정 오류", path.display()))?;
+    let ws_abs = std::fs::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
+    cfg.resolve_paths(&ws_abs);
+    Ok((cfg, warnings))
 }
 
 fn open_dispatcher(ws: &Path, cfg: Config) -> Result<Dispatcher> {
@@ -362,6 +392,27 @@ fn open_dispatcher(ws: &Path, cfg: Config) -> Result<Dispatcher> {
     let d = Dispatcher::new(cfg, log);
     d.prune_log()?;
     Ok(d)
+}
+
+/// Clones or updates every `[[source]]` that has `git`; one result line per source.
+fn sync_sources(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String>> {
+    let git: Vec<_> = cfg.sources.iter().filter(|s| s.git.is_some()).collect();
+    anyhow::ensure!(
+        !git.is_empty(),
+        "git으로 지정한 소스가 없습니다. mwa.toml의 [[source]]에 git = \"주소\"를 적으세요"
+    );
+    let mut out = Vec::new();
+    for s in git {
+        let url = s.git.as_deref().expect("filtered");
+        progress(format!("{}: {url} 동기화 중…", s.name));
+        out.push(
+            match mwa_source::sync_git(url, s.branch.as_deref(), &s.path) {
+                Ok(msg) => format!("{}: {msg}", s.name),
+                Err(e) => format!("{}: 실패 — {e}", s.name),
+            },
+        );
+    }
+    Ok(out)
 }
 
 fn snapshots(cfg: &Config) -> Vec<(String, Result<Snapshot, String>)> {

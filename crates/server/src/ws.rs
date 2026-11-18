@@ -90,6 +90,23 @@ fn handle(msg: ClientMsg, host: &Arc<dyn Host>, tx: &mpsc::UnboundedSender<Serve
                         Ok((_, lines)) => ServerMsg::MapBuilt { id, lines },
                         Err(message) => ServerMsg::Error { id, message },
                     },
+                    "sync" => {
+                        let progress_tx = tx.clone();
+                        let progress = Box::new(move |t: &str| {
+                            let _ = progress_tx.send(ServerMsg::Progress {
+                                id,
+                                text: t.to_string(),
+                            });
+                        });
+                        match host.sync_sources(progress).await {
+                            Ok(lines) => ServerMsg::Lines {
+                                id,
+                                title: "소스 동기화".into(),
+                                lines,
+                            },
+                            Err(message) => ServerMsg::Error { id, message },
+                        }
+                    }
                     "doctor" => ServerMsg::Lines {
                         id,
                         title: "점검 결과".into(),

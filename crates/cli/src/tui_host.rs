@@ -143,6 +143,14 @@ impl Host for CliHost {
         Ok((map, lines))
     }
 
+    async fn sync_sources(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        let cfg = self.cfg.clone();
+        tokio::task::spawn_blocking(move || crate::sync_sources(&cfg, |l| progress(&l)))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))
+    }
+
     async fn doctor(&self) -> Vec<String> {
         match crate::doctor_report(&self.ws, self.cfg.clone(), false).await {
             Ok((lines, _)) => lines,

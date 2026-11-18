@@ -79,6 +79,11 @@ pub trait Host: Send + Sync + 'static {
     async fn build_map(&self) -> Result<(ProductMap, Vec<String>), String>;
     async fn doctor(&self) -> Vec<String>;
     fn auth_lines(&self) -> Vec<String>;
+    /// Clones or updates sources that come from git; returns one line per source.
+    async fn sync_sources(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        drop(progress);
+        Err("이 화면에서는 소스 동기화를 지원하지 않습니다".into())
+    }
     /// A capture or generation is running; switching projects must wait.
     fn busy(&self) -> bool {
         false

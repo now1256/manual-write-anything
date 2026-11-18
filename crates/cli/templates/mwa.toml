@@ -1,14 +1,17 @@
 # mwa 설정 파일. 비밀값(비밀번호, 토큰, API 키)은 넣지 않습니다.
 # API 키가 필요한 백엔드는 환경 변수 이름만 적습니다.
 
-# 매뉴얼을 만들 제품의 코드 (로컬 폴더). 읽기만 합니다.
+# 매뉴얼을 만들 제품의 코드. 읽기만 합니다.
+# 로컬 폴더(path) 또는 git 저장소(git, branch). git만 적으면 .mwa/sources/<name>에 클론하고
+# `mwa sources sync`(화면에서는 /sync)로 최신으로 맞춥니다. 상대 경로는 이 폴더 기준입니다.
 # [[source]]
 # name = "backend"
 # path = "/path/to/backend"
 #
 # [[source]]
 # name = "frontend"
-# path = "/path/to/frontend"
+# git = "git@github.com:acme/console-web.git"
+# branch = "main"
 
 # 제품 지도(mwa map)가 읽을 소스와 백엔드 OpenAPI 위치.
 # adapter는 제품의 파일 배치·로그인 방식을 적은 파일(이 폴더 기준 경로)입니다.

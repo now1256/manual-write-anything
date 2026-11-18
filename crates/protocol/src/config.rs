@@ -124,7 +124,16 @@ pub struct ProductCfg {
 #[serde(deny_unknown_fields)]
 pub struct SourceCfg {
     pub name: String,
+    /// Local checkout. Relative paths are relative to the project folder. With `git` and no
+    /// path, the clone lives in `.mwa/sources/<name>`.
+    #[serde(default)]
     pub path: PathBuf,
+    /// Repository to clone and update (`mwa sources sync`), e.g. `git@github.com:acme/web.git`.
+    #[serde(default)]
+    pub git: Option<String>,
+    /// Branch to follow (default: the remote's default branch).
+    #[serde(default)]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -351,6 +360,18 @@ pub enum ConfigError {
 
 impl Config {
     /// Parses and validates. Returns the config plus non-fatal warnings.
+    /// Makes source paths absolute against the project folder `ws`.
+    pub fn resolve_paths(&mut self, ws: &std::path::Path) {
+        for s in &mut self.sources {
+            if s.path.as_os_str().is_empty() && s.git.is_some() {
+                s.path = std::path::Path::new(".mwa/sources").join(&s.name);
+            }
+            if s.path.is_relative() {
+                s.path = ws.join(&s.path);
+            }
+        }
+    }
+
     pub fn parse(text: &str) -> Result<(Config, Vec<String>), ConfigError> {
         let cfg: Config = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
         let warnings = cfg.validate(text)?;
@@ -378,6 +399,12 @@ impl Config {
 
         let mut seen = std::collections::BTreeSet::new();
         for s in &self.sources {
+            if s.path.as_os_str().is_empty() && s.git.is_none() {
+                return Err(ConfigError::Parse(format!(
+                    "소스 '{}'에 path나 git 중 하나가 필요합니다",
+                    s.name
+                )));
+            }
             if !seen.insert(s.name.as_str()) {
                 return Err(ConfigError::Parse(format!(
                     "소스 이름 '{}'이 중복됩니다",

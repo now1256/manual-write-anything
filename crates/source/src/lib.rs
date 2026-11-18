@@ -43,6 +43,9 @@ fn git(dir: &Path, args: &[&str]) -> Result<(bool, String, String), SourceError>
         .arg("-C")
         .arg(dir)
         .args(args)
+        // Never wait for a password prompt: credentials come from the user's git/SSH setup.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         .output()
         .map_err(|e| SourceError::GitUnavailable(e.to_string()))?;
     Ok((
@@ -60,6 +63,42 @@ fn git_ok(dir: &Path, args: &[&str]) -> Result<String, SourceError> {
             stderr,
         }),
     }
+}
+
+/// Clones `url` into `dest` (first time) or brings it to the newest commit of `branch`
+/// (default: the remote's default branch). `dest` is a clone mwa owns, so local changes are
+/// discarded. Returns a one-line summary.
+pub fn sync_git(url: &str, branch: Option<&str>, dest: &Path) -> Result<String, SourceError> {
+    if !dest.join(".git").exists() {
+        let parent = dest.parent().unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent).map_err(|_| SourceError::PathMissing(parent.into()))?;
+        let target = dest.to_string_lossy().into_owned();
+        let mut args = vec!["clone", "--quiet"];
+        if let Some(b) = branch {
+            args.extend(["--branch", b]);
+        }
+        args.extend([url, target.as_str()]);
+        git_ok(parent, &args)?;
+        let sha = git_ok(dest, &["rev-parse", "--short", "HEAD"])?;
+        return Ok(format!("클론했습니다 ({sha})"));
+    }
+    let before = git_ok(dest, &["rev-parse", "--short", "HEAD"])?;
+    git_ok(dest, &["fetch", "--quiet", "--prune", "origin"])?;
+    let target = match branch {
+        Some(b) => format!("origin/{b}"),
+        None => "origin/HEAD".to_string(),
+    };
+    match branch {
+        Some(b) => git_ok(dest, &["checkout", "--quiet", "--force", "-B", b, &target])?,
+        None => git_ok(dest, &["reset", "--quiet", "--hard", &target])?,
+    };
+    git_ok(dest, &["reset", "--quiet", "--hard", &target])?;
+    let after = git_ok(dest, &["rev-parse", "--short", "HEAD"])?;
+    Ok(if before == after {
+        format!("최신입니다 ({after})")
+    } else {
+        format!("갱신했습니다 ({before} → {after})")
+    })
 }
 
 pub fn snapshot_local(name: &str, path: &Path) -> Result<Snapshot, SourceError> {
@@ -110,6 +149,54 @@ fn count_status_entries(z: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    #[test]
+    fn sync_clones_then_updates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        std::fs::create_dir_all(&origin).unwrap();
+        git_in(&origin, &["init", "-q", "-b", "main"]);
+        git_in(&origin, &["config", "user.email", "t@example.com"]);
+        git_in(&origin, &["config", "user.name", "t"]);
+        std::fs::write(origin.join("a.txt"), "1").unwrap();
+        git_in(&origin, &["add", "."]);
+        git_in(&origin, &["commit", "-q", "-m", "one"]);
+        let url = origin.to_string_lossy().into_owned();
+        let dest = tmp.path().join("p/.mwa/sources/web");
+
+        assert!(
+            sync_git(&url, Some("main"), &dest)
+                .unwrap()
+                .starts_with("클론했습니다")
+        );
+        assert!(
+            sync_git(&url, Some("main"), &dest)
+                .unwrap()
+                .starts_with("최신입니다")
+        );
+        std::fs::write(origin.join("a.txt"), "2").unwrap();
+        git_in(&origin, &["commit", "-q", "-am", "two"]);
+        std::fs::write(dest.join("a.txt"), "local edit").unwrap();
+        assert!(
+            sync_git(&url, Some("main"), &dest)
+                .unwrap()
+                .starts_with("갱신했습니다")
+        );
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "2");
+        assert!(sync_git(&url, Some("nope"), &tmp.path().join("x")).is_err());
+    }
 
     fn run(dir: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
