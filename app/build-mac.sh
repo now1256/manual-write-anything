@@ -24,10 +24,24 @@ cp sidecar/capture/index.mjs sidecar/capture/package.json sidecar/capture/packag
 (cd app/src-tauri/capture && npm ci --omit=dev && npx playwright install chromium)
 
 echo "[4/5] 앱 빌드 (Tauri)"
-# CI=true: the dmg step skips styling the window through Finder (AppleScript), which times
-# out unless the terminal has Automation permission for Finder.
-(cd app && npm ci && CI=true npm run tauri build)
+(cd app && npm ci && npm run tauri build)
 
-echo "[5/5] 완료"
-ls -1 app/src-tauri/target/release/bundle/dmg/*.dmg
-echo "앱: app/src-tauri/target/release/bundle/macos/Manual Write Anything.app"
+echo "[5/5] dmg 만들기"
+# Built with hdiutil directly: Tauri's dmg step styles the window through Finder
+# (AppleScript), which times out without Automation permission.
+bundle=app/src-tauri/target/release/bundle
+app_path="$bundle/macos/Manual Write Anything.app"
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' app/src-tauri/Cargo.toml | head -1)
+arch=$(uname -m)
+mkdir -p "$bundle/dmg"
+dmg="$bundle/dmg/Manual-Write-Anything_${version}_${arch}.dmg"
+stage=$(mktemp -d)
+cp -R "$app_path" "$stage/"
+ln -s /Applications "$stage/Applications"
+rm -f "$dmg"
+hdiutil create -volname "Manual Write Anything" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+rm -rf "$stage"
+
+echo "완료"
+echo "앱: $app_path"
+echo "dmg: $dmg"

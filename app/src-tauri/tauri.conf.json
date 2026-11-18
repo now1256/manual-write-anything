@@ -14,7 +14,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "코드와 실제 화면에서 사용자 매뉴얼을 만듭니다",
     "icon": [
@@ -24,8 +26,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/mwa"],
-    "resources": ["capture/**/*"],
+    "externalBin": [
+      "binaries/mwa"
+    ],
+    "resources": [
+      "capture/**/*"
+    ],
     "macOS": {
       "minimumSystemVersion": "11.0"
     }
