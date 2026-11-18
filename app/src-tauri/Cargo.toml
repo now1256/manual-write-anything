@@ -1,0 +1,19 @@
+[package]
+name = "mwa-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Built on the user's machine (macOS) only; kept out of the root workspace so server builds
+# do not need the platform webview libraries.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+
+[profile.release]
+strip = true

@@ -1,0 +1,12 @@
+{
+  "name": "mwa-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Manual Write Anything desktop shell (Tauri): runs the bundled mwa engine and shows its web UI",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

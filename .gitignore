@@ -7,3 +7,8 @@
 /sidecar/capture/node_modules
 /docs/internal/
 /web/tsconfig.tsbuildinfo
+/app/node_modules
+/app/src-tauri/target
+/app/src-tauri/binaries
+/app/src-tauri/capture
+/app/src-tauri/gen

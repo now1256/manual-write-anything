@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Manual Write Anything</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f6f7f9; --fg: #1d2330; --muted: #6b7385; --err: #b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #14171d; --fg: #e6e9ef; --muted: #98a0b0; --err: #f97066; } }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif; }
+  main { height: 100%; display: grid; place-items: center; text-align: center; padding: 24px; box-sizing: border-box; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 4px 0; color: var(--muted); }
+  #error { display: none; color: var(--err); white-space: pre-wrap; max-width: 640px; text-align: left; }
+  .spin { width: 22px; height: 22px; border: 3px solid var(--muted); border-top-color: transparent;
+    border-radius: 50%; margin: 16px auto 0; animation: r 0.9s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Manual Write Anything</h1>
+    <p id="status">엔진을 시작하는 중입니다…</p>
+    <div class="spin" id="spin"></div>
+    <p id="error"></p>
+  </div>
+</main>
+<script>
+  window.showError = (msg) => {
+    document.getElementById("status").textContent = "엔진을 시작하지 못했습니다";
+    document.getElementById("spin").style.display = "none";
+    const el = document.getElementById("error");
+    el.textContent = msg;
+    el.style.display = "block";
+  };
+</script>
+</body>
+</html>

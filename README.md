@@ -57,6 +57,19 @@ mwa -C ~/manuals/acme serve           # 화면: http://127.0.0.1:7700
 ssh -L 7700:localhost:7700 <서버> mwa -C <프로젝트> serve
 ```
 
+## 데스크톱 앱 (macOS)
+
+맥에서 이 저장소를 클론한 뒤 한 번에 빌드합니다. Rust와 Node.js 20 이상이 필요합니다.
+
+```sh
+git clone https://github.com/now1256/manual-write-anything.git
+cd manual-write-anything
+./app/build-mac.sh
+# → app/src-tauri/target/release/bundle/dmg/*.dmg
+```
+
+앱을 켜면 내장 엔진(`mwa serve`)이 빈 포트에서 뜨고 같은 화면이 창에 나옵니다. 프로젝트는 지금은 `~/Library/Application Support/io.github.now1256.mwa/projects/default` 하나이며, 엔진 기록은 같은 폴더의 `engine.log`에 남습니다. Claude CLI는 맥에서 로그인되어 있어야 합니다(앱이 로그인 셸의 PATH로 찾습니다).
+
 ## 안전 원칙
 
 - 대상 제품의 코드는 읽기만 합니다.
