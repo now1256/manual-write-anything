@@ -142,7 +142,7 @@ export default function App() {
     if (name === "gen" && !arg) return push("error", "매뉴얼을 만들 기능을 왼쪽에서 먼저 고르세요.");
     if (!channel.current?.send({ type: "command", id, name, arg })) return push("error", "서버에 연결되어 있지 않습니다.");
     pending.current = id;
-    setBusy({ map: "제품 지도 생성", doctor: "점검", shot: "촬영", gen: "매뉴얼 생성", sync: "소스 동기화" }[name] ?? "조회");
+    setBusy({ map: "제품 지도 생성", doctor: "점검", shot: "촬영", gen: "매뉴얼 생성", sync: "소스 동기화", browser: "브라우저 설치" }[name] ?? "조회");
   };
 
   const sendChat = (text: string) => {

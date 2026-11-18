@@ -173,6 +173,14 @@ impl Host for CliHost {
         store.save().map_err(|e| e.to_string())
     }
 
+    async fn install_browser(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        let cfg = self.cfg.clone();
+        tokio::task::spawn_blocking(move || crate::install_browser(&cfg, |l| progress(&l)))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))
+    }
+
     async fn sync_sources(&self, progress: OnDelta) -> Result<Vec<String>, String> {
         let cfg = self.cfg.clone();
         tokio::task::spawn_blocking(move || crate::sync_sources(&cfg, |l| progress(&l)))

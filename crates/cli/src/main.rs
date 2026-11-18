@@ -395,6 +395,128 @@ fn open_dispatcher(ws: &Path, cfg: Config) -> Result<Dispatcher> {
     Ok(d)
 }
 
+/// Node, Playwright, Chromium, memory and the adapter file: what screenshots need.
+fn capture_env_lines(ws: &Path, cfg: &Config) -> (Vec<String>, bool) {
+    let mut out = vec!["촬영 환경".to_string()];
+    let mut ok = true;
+    let node = cfg
+        .capture
+        .as_ref()
+        .map_or("node".to_string(), |c| c.node.clone());
+    let script = mwa_capture::shoot::default_script();
+    let dir = script.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let run = |args: &[&str]| {
+        std::process::Command::new(&node)
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    match run(&["--version"]) {
+        None => {
+            ok = false;
+            out.push(format!(
+                "  node           실패  '{node}'를 실행할 수 없습니다 (Node.js 20 이상 설치)"
+            ));
+        }
+        Some(v) => {
+            let major: u32 = v
+                .trim_start_matches('v')
+                .split('.')
+                .next()
+                .and_then(|m| m.parse().ok())
+                .unwrap_or(0);
+            if major < 20 {
+                ok = false;
+                out.push(format!("  node           실패  {v} (20 이상 필요)"));
+            } else {
+                out.push(format!("  node           OK    {v}"));
+            }
+            let probe =
+                "import('playwright').then(({chromium}) => console.log(chromium.executablePath()))";
+            match run(&["--input-type=module", "-e", probe]) {
+                None => {
+                    ok = false;
+                    out.push(format!(
+                        "  playwright     실패  {}에서 찾을 수 없습니다 (npm ci)",
+                        dir.display()
+                    ));
+                }
+                Some(exe) if Path::new(&exe).exists() => {
+                    out.push("  chromium       OK    설치됨".into())
+                }
+                Some(_) => {
+                    ok = false;
+                    out.push(
+                        "  chromium       실패  촬영용 브라우저가 없습니다. /browser 로 설치하세요"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(mb) = mwa_capture::mem::available_mb() {
+        let need = cfg.capture.as_ref().map_or(2500, |c| c.min_start_mb);
+        let mark = if mb >= need { "OK  " } else { "부족" };
+        out.push(format!(
+            "  메모리         {mark}  가용 {mb}MB (촬영 시작 기준 {need}MB)"
+        ));
+    }
+    if let Some(p) = &cfg.product {
+        let path = ws.join(&p.adapter);
+        if path.is_file() {
+            out.push(format!("  어댑터         OK    {}", p.adapter));
+        } else {
+            ok = false;
+            out.push(format!(
+                "  어댑터         실패  {} 이 없습니다 (docs/adapter.md)",
+                path.display()
+            ));
+        }
+    }
+    (out, ok)
+}
+
+/// Downloads Playwright's Chromium next to the capture runner (one time, ~150MB).
+fn install_browser(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String>> {
+    let script = mwa_capture::shoot::default_script();
+    let dir = script.parent().unwrap_or(Path::new("."));
+    let npx = cfg
+        .capture
+        .as_ref()
+        .map(|c| Path::new(&c.node).with_file_name("npx"))
+        .filter(|p| p.is_file())
+        .unwrap_or_else(|| PathBuf::from("npx"));
+    progress(format!(
+        "촬영용 브라우저(Chromium) 설치 중… ({})",
+        dir.display()
+    ));
+    let out = std::process::Command::new(npx)
+        .args(["playwright", "install", "chromium"])
+        .current_dir(dir)
+        .output()
+        .context("npx를 실행할 수 없습니다 (Node.js 설치 필요)")?;
+    let tail = |b: &[u8]| {
+        String::from_utf8_lossy(b)
+            .lines()
+            .rev()
+            .take(5)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+    anyhow::ensure!(
+        out.status.success(),
+        "설치 실패: {}",
+        tail(&out.stderr).join(" / ")
+    );
+    Ok(vec!["촬영용 브라우저를 설치했습니다".into()])
+}
+
 /// Clones or updates every `[[source]]` that has `git`; one result line per source.
 fn sync_sources(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String>> {
     let git: Vec<_> = cfg.sources.iter().filter(|s| s.git.is_some()).collect();
@@ -560,6 +682,9 @@ async fn doctor(ws: &Path, no_call: bool) -> Result<ExitCode> {
 
 async fn doctor_report(ws: &Path, cfg: Config, no_call: bool) -> Result<(Vec<String>, bool)> {
     let (mut out, mut ok) = source_lines(&snapshots(&cfg));
+    let (capture_lines, capture_ok) = capture_env_lines(ws, &cfg);
+    out.extend(capture_lines);
+    ok &= capture_ok;
 
     // The cheapest configured model per backend, taken from the first role that uses it.
     let model_for = |backend: &str| {

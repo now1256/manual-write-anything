@@ -84,6 +84,11 @@ pub trait Host: Send + Sync + 'static {
         drop(progress);
         Err("이 화면에서는 소스 동기화를 지원하지 않습니다".into())
     }
+    /// Installs the browser used for screenshots.
+    async fn install_browser(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        drop(progress);
+        Err("이 화면에서는 브라우저 설치를 지원하지 않습니다".into())
+    }
     /// Editable settings of this project (JSON view of `mwa.toml`).
     fn settings(&self) -> Result<serde_json::Value, String> {
         Err("이 화면에서는 설정을 지원하지 않습니다".into())

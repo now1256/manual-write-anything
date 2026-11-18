@@ -90,6 +90,23 @@ fn handle(msg: ClientMsg, host: &Arc<dyn Host>, tx: &mpsc::UnboundedSender<Serve
                         Ok((_, lines)) => ServerMsg::MapBuilt { id, lines },
                         Err(message) => ServerMsg::Error { id, message },
                     },
+                    "browser" => {
+                        let progress_tx = tx.clone();
+                        let progress = Box::new(move |t: &str| {
+                            let _ = progress_tx.send(ServerMsg::Progress {
+                                id,
+                                text: t.to_string(),
+                            });
+                        });
+                        match host.install_browser(progress).await {
+                            Ok(lines) => ServerMsg::Lines {
+                                id,
+                                title: "브라우저 설치".into(),
+                                lines,
+                            },
+                            Err(message) => ServerMsg::Error { id, message },
+                        }
+                    }
                     "sync" => {
                         let progress_tx = tx.clone();
                         let progress = Box::new(move |t: &str| {
