@@ -1,0 +1,10 @@
+{
+  "name": "mwa-capture-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Playwright capture runner driven by mwa (stdin job JSON, stdout JSONL events)",
+  "dependencies": {
+    "playwright": "1.65.1"
+  }
+}

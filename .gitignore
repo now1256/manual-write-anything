@@ -1,0 +1,9 @@
+/target
+.mwa/
+*.db
+.env*
+/web/dist
+/web/node_modules
+/sidecar/capture/node_modules
+/docs/internal/
+/web/tsconfig.tsbuildinfo

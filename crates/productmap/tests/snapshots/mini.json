@@ -1,0 +1,326 @@
+{
+  "schema_version": 1,
+  "adapter": "acme",
+  "sources": {
+    "frontend_sha": null,
+    "backend_sha": null,
+    "openapi": {
+      "origin": "fixtures/mini/openapi.json",
+      "sha256": "4c658ac94e461d6a1d2422d0527450896d812ece248812e372252fd59ec10994",
+      "operations": 9
+    }
+  },
+  "features": [
+    {
+      "key": "source-connections",
+      "section": "MAIN_NAV",
+      "group": "소스",
+      "label": "연결 관리",
+      "href": "/source/connections",
+      "permissions": [
+        "SRC_LINK_VIEW"
+      ],
+      "license_menu": "소스",
+      "nav_line": 9,
+      "screens": [
+        {
+          "route": "/source/connections",
+          "file": "src/app/(app)/source/connections/page.tsx",
+          "kind": "menu",
+          "reached_files": 6,
+          "ui_permissions": [
+            "SRC_LINK_CREATE",
+            "SRC_LINK_EDIT"
+          ],
+          "apis": [
+            {
+              "method": "DELETE",
+              "path": "/api/source/systems",
+              "client": "src/lib/api/source/systems/fetcher.ts:5",
+              "proxy": "src/app/api/source/systems/route.ts:4",
+              "backend": "DELETE /systems",
+              "operation": "DELETE /systems",
+              "operation_id": "delete_systems"
+            },
+            {
+              "method": "GET",
+              "path": "/api/source/systems",
+              "client": "src/lib/api/source/systems/fetcher.ts:2",
+              "proxy": "src/app/api/source/systems/route.ts:2",
+              "backend": "GET /systems",
+              "operation": "GET /systems",
+              "operation_id": "list_systems"
+            },
+            {
+              "method": "POST",
+              "path": "/api/source/systems",
+              "client": "src/lib/api/source/systems/fetcher.ts:4",
+              "proxy": "src/app/api/source/systems/route.ts:3",
+              "backend": "POST /systems",
+              "operation": "POST /systems",
+              "operation_id": "create_system"
+            }
+          ]
+        },
+        {
+          "route": "/source/connections/{id}",
+          "file": "src/app/(app)/source/connections/[id]/page.tsx",
+          "kind": "menu_detail",
+          "reached_files": 3,
+          "ui_permissions": [],
+          "apis": [
+            {
+              "method": "GET",
+              "path": "/api/source/systems/{}",
+              "client": "src/lib/api/source/systems/fetcher.ts:3",
+              "proxy": "src/app/api/source/systems/[id]/route.ts:2",
+              "backend": "GET /systems/{}",
+              "operation": "GET /systems/{system_id}",
+              "operation_id": "get_system"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "nlq-semantic-model",
+      "section": "MAIN_NAV",
+      "group": "소스",
+      "label": "시맨틱 모델",
+      "href": "/nlq/semantic-model",
+      "permissions": [
+        "QRY_MODEL_VIEW"
+      ],
+      "license_menu": "소스",
+      "nav_line": 10,
+      "screens": [
+        {
+          "route": "/nlq/semantic-model",
+          "file": "src/app/(app)/nlq/semantic-model/page.tsx",
+          "kind": "menu",
+          "reached_files": 3,
+          "ui_permissions": [],
+          "apis": [
+            {
+              "method": "GET",
+              "path": "/api/nlq/semantic-models",
+              "client": "src/lib/api/nlq/semantic-model/index.ts:4",
+              "proxy": "src/app/api/nlq/semantic-models/route.ts:2",
+              "backend": "GET /nlq/semantic-models",
+              "operation": "GET /nlq/semantic-models",
+              "operation_id": "list_models"
+            },
+            {
+              "method": "GET",
+              "path": "/api/nlq/semantic-models/summary",
+              "client": "src/lib/api/nlq/semantic-model/index.ts:5",
+              "proxy": "src/app/api/nlq/semantic-models/summary/route.ts:2",
+              "backend": "GET /nlq/semantic-models/summary",
+              "operation": null,
+              "operation_id": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "license",
+      "section": "ADMIN_NAV",
+      "group": "시스템",
+      "label": "제품 정보",
+      "href": "/settings/license",
+      "permissions": [
+        "OPS_ACCESS"
+      ],
+      "license_menu": "설정",
+      "nav_line": 15,
+      "screens": [
+        {
+          "route": "/settings/license",
+          "file": "src/app/(app)/settings/license/page.tsx",
+          "kind": "menu",
+          "reached_files": 2,
+          "ui_permissions": [],
+          "apis": [
+            {
+              "method": "POST",
+              "path": "/api/license/apply",
+              "client": "src/app/(app)/settings/license/page.tsx:2",
+              "proxy": "src/app/api/license/apply/route.ts:2",
+              "backend": "POST /license/apply",
+              "operation": "POST /license/apply",
+              "operation_id": "apply_license"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "server-resources",
+      "section": "OPS_NAV",
+      "group": null,
+      "label": "서버 자원 현황",
+      "href": "/monitoring/server-resources",
+      "permissions": [],
+      "license_menu": "모니터링",
+      "nav_line": 18,
+      "screens": [
+        {
+          "route": "/monitoring/server-resources",
+          "file": "src/app/(app)/monitoring/server-resources/page.tsx",
+          "kind": "menu",
+          "reached_files": 2,
+          "ui_permissions": [],
+          "apis": [
+            {
+              "method": "GET",
+              "path": "/api/monitoring/stream",
+              "client": "src/app/(app)/monitoring/server-resources/page.tsx:3",
+              "proxy": "src/app/api/monitoring/stream/route.ts:2",
+              "backend": "GET /monitoring/stream",
+              "operation": null,
+              "operation_id": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "approval-pending",
+      "section": "REVIEW_NAV",
+      "group": null,
+      "label": "결재 대기",
+      "href": "/approval/pending",
+      "permissions": [],
+      "license_menu": "결재",
+      "nav_line": 21,
+      "screens": [
+        {
+          "route": "/approval/pending",
+          "file": "src/app/(app)/approval/pending/page.tsx",
+          "kind": "menu",
+          "reached_files": 1,
+          "ui_permissions": [],
+          "apis": []
+        }
+      ]
+    }
+  ],
+  "other_screens": [
+    {
+      "route": "/login",
+      "file": "src/app/(auth)/login/page.tsx",
+      "kind": "outside",
+      "reached_files": 1,
+      "ui_permissions": [],
+      "apis": [
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "client": "src/app/(auth)/login/page.tsx:1",
+          "proxy": "src/app/api/auth/login/route.ts:2",
+          "backend": "POST /auth/login",
+          "operation": "POST /auth/login",
+          "operation_id": "login"
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    {
+      "code": "CFG_ACCESS",
+      "label": "설정 > 사용자 및 권한 > 접근",
+      "license_menu": "설정",
+      "licensable": false,
+      "server": [],
+      "menus": [],
+      "ui_pages": []
+    },
+    {
+      "code": "OPS_ACCESS",
+      "label": "설정 > 시스템 > 접근",
+      "license_menu": "설정",
+      "licensable": false,
+      "server": [
+        {
+          "file": "lib/apiLicense.py",
+          "line": 3,
+          "route": "POST /license/apply",
+          "operation": "POST /license/apply"
+        }
+      ],
+      "menus": [
+        "license"
+      ],
+      "ui_pages": []
+    },
+    {
+      "code": "QRY_MODEL_VIEW",
+      "label": "NLQ > 시맨틱 모델 > 시맨틱 모델 > 목록 조회",
+      "license_menu": "NLQ",
+      "licensable": true,
+      "server": [],
+      "menus": [
+        "nlq-semantic-model"
+      ],
+      "ui_pages": []
+    },
+    {
+      "code": "SRC_LINK_CREATE",
+      "label": "소스 > 연결 관리 > 원천 시스템 > 등록",
+      "license_menu": "소스",
+      "licensable": true,
+      "server": [],
+      "menus": [],
+      "ui_pages": [
+        "/source/connections"
+      ]
+    },
+    {
+      "code": "SRC_LINK_EDIT",
+      "label": "소스 > 연결 관리 > 원천 시스템 > 수정",
+      "license_menu": "소스",
+      "licensable": true,
+      "server": [],
+      "menus": [],
+      "ui_pages": [
+        "/source/connections"
+      ]
+    },
+    {
+      "code": "SRC_LINK_VIEW",
+      "label": "소스 > 연결 관리 > 원천 시스템 > 목록 조회",
+      "license_menu": "소스",
+      "licensable": true,
+      "server": [],
+      "menus": [
+        "source-connections"
+      ],
+      "ui_pages": []
+    }
+  ],
+  "gaps": {
+    "unresolved_client_calls": [],
+    "unlinked_client_calls": [],
+    "unresolved_routes": [
+      "GET /api/auth/me (src/app/api/auth/me/route.ts:1)"
+    ],
+    "missing_backend_operations": [
+      "GET /monitoring/stream <- GET /api/monitoring/stream (src/app/api/monitoring/stream/route.ts:2)",
+      "GET /nlq/semantic-models/summary <- GET /api/nlq/semantic-models/summary (src/app/api/nlq/semantic-models/summary/route.ts:2)"
+    ],
+    "unknown_permission_codes": []
+  },
+  "coverage": {
+    "menus": 5,
+    "menus_with_screen": 5,
+    "screens": 7,
+    "screens_with_api": 6,
+    "client_calls": 9,
+    "client_calls_linked": 9,
+    "proxy_handlers": 12,
+    "proxy_resolved": 11,
+    "upstream_calls": 11,
+    "upstream_with_operation": 9
+  }
+}

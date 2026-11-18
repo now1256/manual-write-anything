@@ -1,0 +1,46 @@
+{
+ "openapi": "3.1.0",
+ "paths": {
+  "/systems": {
+   "get": {
+    "operationId": "list_systems"
+   },
+   "post": {
+    "operationId": "create_system"
+   },
+   "delete": {
+    "operationId": "delete_systems"
+   }
+  },
+  "/systems/{system_id}": {
+   "get": {
+    "operationId": "get_system"
+   }
+  },
+  "/systems/test": {
+   "post": {
+    "operationId": "test_system"
+   }
+  },
+  "/nlq/semantic-models": {
+   "get": {
+    "operationId": "list_models"
+   }
+  },
+  "/license/apply": {
+   "post": {
+    "operationId": "apply_license"
+   }
+  },
+  "/auth/login": {
+   "post": {
+    "operationId": "login"
+   }
+  },
+  "/approval/docs": {
+   "get": {
+    "operationId": "list_docs"
+   }
+  }
+ }
+}

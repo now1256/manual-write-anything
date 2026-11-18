@@ -1,0 +1,64 @@
+# 테스트용 가상 제품 어댑터 (실제 제품과 무관)
+name = "acme"
+nav_file = "src/app/(app)/_components/sidebar/menu.ts"
+app_dir = "src/app"
+api_routes_dir = "src/app/api"
+alias_prefix = "@/"
+stop_dirs = ["src/lib/contexts", "src/app/(app)/_components"]
+client_call_fns = ["apiFetch", "fetch", "EventSource"]
+permissions_file = "lib/permissions.py"
+permission_labels_dict = "PERMISSION_NAMES"
+non_licensable_set = "FREE_MENUS"
+enforcement_fn = "needs_permission"
+backend_code_dir = "lib"
+
+# 라이선스 묶음은 menu.ts의 licenseMenuOf와 같습니다.
+[[nav_sections]]
+export = "MAIN_NAV"
+
+[[nav_sections]]
+export = "ADMIN_NAV"
+license_menu = "설정"
+
+[[nav_sections]]
+export = "OPS_NAV"
+license_menu = "모니터링"
+
+[[nav_sections]]
+export = "REVIEW_NAV"
+license_menu = "결재"
+
+[[proxy_rules]]
+kind = "sink"
+func = "callUpstream"
+path_arg = 1
+init_arg = 2
+
+[[proxy_rules]]
+kind = "factory"
+factory = "forwarder"
+opts_arg = 1
+path_prop = "path"
+
+[[proxy_rules]]
+kind = "prefixed_wrapper"
+inner = "proxyQuery"
+path_arg = 1
+opts_arg = 2
+
+[[proxy_rules]]
+kind = "direct_fetch"
+func = "fetch"
+base_const = "BACKEND_ORIGIN"
+
+[auth]
+login_path = "/api/auth/login"
+me_path = "/api/auth/me"
+logout_path = "/api/auth/logout"
+session_cookie = "acme_session"
+user_field = "userId"
+keepalive_paths = ["/api/auth/session/touch"]
+
+[ui]
+domain_storage_key = "acme:tenant"
+mask_buttons = ["사용자 메뉴"]

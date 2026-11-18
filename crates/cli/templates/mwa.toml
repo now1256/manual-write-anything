@@ -1,0 +1,71 @@
+# mwa 설정 파일. 비밀값(비밀번호, 토큰, API 키)은 넣지 않습니다.
+# API 키가 필요한 백엔드는 환경 변수 이름만 적습니다.
+
+# 매뉴얼을 만들 제품의 코드 (로컬 폴더). 읽기만 합니다.
+# [[source]]
+# name = "backend"
+# path = "/path/to/backend"
+#
+# [[source]]
+# name = "frontend"
+# path = "/path/to/frontend"
+
+# 제품 지도(mwa map)가 읽을 소스와 백엔드 OpenAPI 위치.
+# adapter는 제품의 파일 배치·로그인 방식을 적은 파일(이 폴더 기준 경로)입니다.
+# [product]
+# name = "Acme Console"
+# adapter = "adapter.toml"
+# frontend = "frontend"
+# backend = "backend"
+# openapi = "http://localhost:8000/openapi.json"
+
+# 제품 화면 로그인 계정. 비밀번호는 `mwa auth set <이름>`으로 사용자별 자격 파일에 저장합니다(여기에 쓰지 않음).
+# purpose = "bootstrap"은 계정 준비 전용이라 촬영에는 쓰지 않습니다.
+# [profiles.manual]
+# base_url = "http://localhost:3000"
+# user_id = "manual-writer"
+# purpose = "capture"
+
+# 스크린샷 촬영(mwa shot). profile은 위 [profiles] 중 purpose = "capture"인 것
+# [capture]
+# profile = "manual"
+# domain = "tenant-a"
+# viewport = [1440, 900]
+# scale = 2.0
+
+# 구독 로그인된 Claude Code CLI를 하위 프로세스로 실행합니다.
+[backends.claude]
+kind = "cli:claude-code"
+max_concurrency = 2
+timeout_secs = 300
+
+# [backends.anthropic]
+# kind = "api:anthropic"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+# [backends.local]
+# kind = "ollama"
+# base_url = "http://localhost:11434/v1"
+
+[roles.worker]
+backend = "claude"
+model = "haiku"
+
+[roles.writer]
+backend = "claude"
+model = "sonnet"
+
+[roles.verifier]
+backend = "claude"
+model = "opus"
+
+[roles.chat]
+backend = "claude"
+model = "sonnet"
+
+[budget]
+max_usd_per_run = 5.0
+
+# HTTP API처럼 비용을 알려주지 않는 백엔드용 단가 (USD / 100만 토큰, [입력, 출력])
+# [prices]
+# "claude-sonnet-5-5" = [2.0, 10.0]

@@ -1,0 +1,18 @@
+[package]
+name = "mwa-core"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+mwa-backends = { version = "0.1.0", path = "../backends" }
+mwa-protocol = { version = "0.1.0", path = "../protocol" }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["sync", "time"] }
+
+[dev-dependencies]
+async-trait = "0.1.92"
+tempfile = "3.27.0"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time"] }
