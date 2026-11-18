@@ -24,7 +24,9 @@ cp sidecar/capture/index.mjs sidecar/capture/package.json sidecar/capture/packag
 (cd app/src-tauri/capture && npm ci --omit=dev && npx playwright install chromium)
 
 echo "[4/5] 앱 빌드 (Tauri)"
-(cd app && npm ci && npm run tauri build)
+# CI=true: the dmg step skips styling the window through Finder (AppleScript), which times
+# out unless the terminal has Automation permission for Finder.
+(cd app && npm ci && CI=true npm run tauri build)
 
 echo "[5/5] 완료"
 ls -1 app/src-tauri/target/release/bundle/dmg/*.dmg
