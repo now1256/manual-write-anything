@@ -42,6 +42,17 @@ if ! need claude; then
 fi
 ok "Claude Code CLI"
 
+# Logged in already? The official CLI says so; its tokens are never read here.
+LOGGED_IN=no
+claude auth status --json 2>/dev/null \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.exit(JSON.parse(s).loggedIn?0:1)}catch{process.exit(1)}})' \
+  && LOGGED_IN=yes
+if [ "$LOGGED_IN" = yes ]; then
+  ok "Claude 로그인됨"
+elif [ "$(ask 'Claude 구독 로그인을 지금 할까요? 나중에 해도 됩니다 (y/n)' n)" = y ]; then
+  claude auth login --claudeai </dev/tty && LOGGED_IN=yes && ok "Claude 로그인됨"
+fi
+
 # ---------------------------------------------------------------- 빌드
 say "화면 빌드"
 (cd web && npm ci --no-audit --no-fund && npm run build) >/dev/null
@@ -55,7 +66,9 @@ ok "$MWA"
 
 # ---------------------------------------------------------------- 프로젝트
 say "프로젝트"
-PROJECT="$(ask '매뉴얼 프로젝트 폴더' "$HOME/manuals/project")"
+# Other projects are added and switched from the screen's top bar.
+PROJECT="$HOME/manuals/project"
+ok "$PROJECT"
 PORT="$(ask '열 포트' 7000)"
 "$MWA" -C "$PROJECT" browser
 ok "촬영 브라우저"
@@ -94,6 +107,9 @@ if [ "$SERVICE" = no ]; then
   echo "  띄우기:   $MWA -C $PROJECT serve --addr 0.0.0.0:$PORT"
 fi
 echo
-echo "  아직 안 했다면 이 서버에서 한 번: claude   (구독 계정으로 로그인 — 모든 사용자의 작업이 이 계정으로 돕니다)"
-echo "  그다음 화면의 '시작하기'에서 코드 위치·제품 어댑터·촬영할 사이트를 설정합니다."
+if [ "$LOGGED_IN" = no ]; then
+  echo "  Claude 로그인이 아직입니다. 이 서버에서 한 번: claude auth login"
+  echo "  (구독 계정 — 모든 사용자의 작업이 이 계정으로 돕니다. 로그인 전에는 매뉴얼 쓰기·장면 설명이 안 됩니다)"
+fi
+echo "  화면의 '시작하기'에서 코드 위치·제품 어댑터·촬영할 사이트를 설정합니다."
 echo "  방화벽이 있으면 $PORT 포트를 사내망에 열어 주세요 (Ubuntu: sudo ufw allow $PORT/tcp)."

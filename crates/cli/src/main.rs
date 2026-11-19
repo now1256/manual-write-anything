@@ -8,6 +8,7 @@ use mwa_protocol::{Config, Request, Role};
 use mwa_source::{Snapshot, snapshot_local};
 use serde_json::{Value, json};
 
+mod adapter_gen;
 mod confluence;
 mod projects;
 mod settings;
@@ -63,6 +64,8 @@ enum Cmd {
     },
     /// 작업 공간을 만들고 소스의 현재 커밋을 기록합니다
     Init,
+    /// 코드를 읽어 제품 어댑터(adapter.toml)를 만들고 제품 지도로 확인합니다 (시작하기 "코드 읽고 제품 파악")
+    Adapter,
     /// 촬영용 브라우저(Playwright + Chromium)를 데이터 폴더에 설치합니다 (화면의 "브라우저 설치"와 같음)
     Browser,
     /// 설치·로그인·소스 상태를 점검합니다
@@ -259,6 +262,12 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
     match cmd {
         Cmd::Ui { snapshot, feature } => ui(cli_workspace, snapshot, feature).await,
         Cmd::Init => init(cli_workspace),
+        Cmd::Adapter => {
+            for l in adapter_gen::make(cli_workspace, |l| println!("{l}")).await? {
+                println!("{l}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Browser => {
             ensure_project(cli_workspace)?;
             let cfg = load_config(cli_workspace)?;

@@ -5,12 +5,14 @@ interface Props {
   /** Bumped after commands finish so the list refreshes. */
   version: number;
   onCommand: (name: string) => void;
-  onOpenSettings: () => void;
+  /** Opens the settings with only this step's part. */
+  onOpenSettings: (step: string) => void;
 }
 
 const COMMAND_LABEL: Record<string, string> = {
   sync: "Git 소스 받기",
   map: "지도 만들기",
+  adapter: "코드 읽고 어댑터 만들기",
   shot: "첫 화면 촬영",
   doctor: "점검",
 };
@@ -48,7 +50,7 @@ export default function SetupChecklist({ version, onCommand, onOpenSettings }: P
                 <span className="muted">{s.detail}</span>
               </span>
               {s.key === next && s.action === "settings" && (
-                <button className="primary" onClick={onOpenSettings}>설정 열기</button>
+                <button className="primary" onClick={() => onOpenSettings(s.key)}>설정하기</button>
               )}
               {s.key === next && command && (
                 <button className="primary" onClick={() => onCommand(command)}>

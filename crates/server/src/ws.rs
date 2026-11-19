@@ -113,6 +113,23 @@ fn handle(msg: ClientMsg, host: &Arc<dyn Host>, tx: &mpsc::UnboundedSender<Serve
                             }
                         }
                     },
+                    "adapter" => {
+                        let progress_tx = tx.clone();
+                        let progress = Box::new(move |t: &str| {
+                            let _ = progress_tx.send(ServerMsg::Progress {
+                                id,
+                                text: t.to_string(),
+                            });
+                        });
+                        match host.make_adapter(progress).await {
+                            Ok(lines) => ServerMsg::Lines {
+                                id,
+                                title: "코드 읽고 제품 파악".into(),
+                                lines,
+                            },
+                            Err(message) => ServerMsg::Error { id, message },
+                        }
+                    }
                     "shotdoc" => match arg {
                         None => ServerMsg::Error {
                             id,

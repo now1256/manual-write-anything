@@ -857,6 +857,12 @@ impl Host for CliHost {
             .map_err(|e| format!("{e:#}"))
     }
 
+    async fn make_adapter(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        crate::adapter_gen::make(&self.ws, |l| progress(&l))
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
     async fn capture_document(
         &self,
         feature: &str,

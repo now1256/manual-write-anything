@@ -7,6 +7,8 @@ import ReferenceSettings from "./ReferenceSettings";
 type Picker = { mode: "dir" | "file"; ext?: string; start?: string; onPick: (p: string) => void };
 
 interface Props {
+  /** Setup step opened from "시작하기": only its section shows, and saving goes back. */
+  focus?: string | null;
   onClose: () => void;
   onCommand: (name: string) => void;
 }
@@ -14,7 +16,15 @@ interface Props {
 const MODELS = ["haiku", "sonnet", "opus", "fable"];
 
 /** Project settings (mwa.toml): sources, product, login/capture target, models, budget. */
-export default function SettingsView({ onClose, onCommand }: Props) {
+const STEP_TITLE: Record<string, string> = {
+  code: "코드 연결",
+  product: "제품 (어댑터 직접 고르기)",
+  account: "사이트와 계정",
+  template: "매뉴얼 양식",
+};
+
+export default function SettingsView({ focus, onClose, onCommand }: Props) {
+  const show = (k: string) => !focus || focus === k;
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -95,7 +105,8 @@ export default function SettingsView({ onClose, onCommand }: Props) {
   return (
     <div className="settings">
       <div className="settings-head">
-        <h2>프로젝트 설정</h2>
+        <h2>{focus ? `시작하기 · ${STEP_TITLE[focus] ?? "설정"}` : "프로젝트 설정"}</h2>
+        {focus && <span className="muted small">저장하면 시작하기로 돌아가 다음 단계가 열립니다</span>}
         <span className="spacer" />
         {dirty && <span className="badge warn">저장하지 않은 변경</span>}
         <button
@@ -118,6 +129,7 @@ export default function SettingsView({ onClose, onCommand }: Props) {
         )}
       </div>
 
+      {show("code") && (
       <section>
         <h3>코드 소스</h3>
         <p className="muted small">프론트·백엔드 코드를 연결합니다. 이미 있는 폴더(git 저장소)를 고르거나, Git 주소를 적으면 프로젝트 안에 받아 옵니다. 코드는 읽기만 합니다.</p>
@@ -155,7 +167,9 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           {s.sources.some((x) => x.git) && <button onClick={() => onCommand("sync")}>Git 소스 받기 (/sync, 저장 후)</button>}
         </div>
       </section>
+      )}
 
+      {show("product") && (
       <section>
         <h3>제품</h3>
         {s.product ? (
@@ -197,7 +211,9 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           <button onClick={addProduct}>제품 설정 추가</button>
         )}
       </section>
+      )}
 
+      {show("account") && (
       <section>
         <h3>로그인 계정과 촬영 대상</h3>
         <p className="muted small">비밀번호는 이 프로젝트가 아니라 사용자 자격 파일(권한 600)에만 저장합니다. 로그인은 1번만 시도하고 실패하면 멈춥니다.</p>
@@ -243,7 +259,9 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           <button onClick={() => update((d) => (d.capture = { profile: d.profiles[0]?.name ?? "", domain: "", viewport: [1440, 900], scale: 2, node: "" }))}>촬영 설정 추가</button>
         )}
       </section>
+      )}
 
+      {show("template") && (
       <section>
         <h3>매뉴얼 양식</h3>
         <p className="muted small">처음 생성할 때 이 견본 매뉴얼(PDF 또는 Markdown)에서 절 구성, 표·흐름도·주의 상자 형식, 캡처 배치와 문체를 배웁니다. 한 번 배우면 프로젝트에 저장된 양식을 씁니다.</p>
@@ -256,9 +274,11 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           {s.template && <Checked kind="file" value={s.template} />}
         </label>
       </section>
+      )}
 
       <ReferenceSettings />
 
+      {!focus && (
       <section>
         <h3>실행 파일</h3>
         <p className="muted small">비워 두면 PATH와 흔한 설치 위치(~/.local/bin, Homebrew 등)에서 자동으로 찾습니다. 다른 위치에 설치했다면 전체 경로를 적으세요.</p>
@@ -280,7 +300,9 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           </label>
         )}
       </section>
+      )}
 
+      {!focus && (
       <section>
         <h3>모델</h3>
         <p className="muted small">역할마다 백엔드와 모델을 고릅니다. 검증은 작성과 다른 계열을 권장합니다.</p>
@@ -309,6 +331,8 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           <input type="number" step="0.5" value={s.max_usd_per_run} onChange={(e) => update((d) => (d.max_usd_per_run = Number(e.target.value)))} />
         </label>
       </section>
+      )}
+      {!focus && (
       <section>
         <h3>확장 기능</h3>
         <p className="muted small">기본 작업(매뉴얼 버전 관리, 기존 매뉴얼 갱신, 새 매뉴얼 쓰기) 밖의 연결입니다. 켠 것만 화면에 나타납니다.</p>
@@ -316,6 +340,7 @@ export default function SettingsView({ onClose, onCommand }: Props) {
           <input type="checkbox" checked={s.confluence} onChange={(e) => update((d) => (d.confluence = e.target.checked))} /> 컨플루언스 Cloud에 게시 — ④ 편집·버전에 "컨플루언스에 게시" 버튼 (게시 위치와 API 토큰은 그 창에서 설정)
         </label>
       </section>
+      )}
       {picker && (
         <PathPicker
           mode={picker.mode}

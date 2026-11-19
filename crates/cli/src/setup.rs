@@ -32,7 +32,7 @@ fn abs(ws: &Path, p: &str) -> PathBuf {
 }
 
 /// What kind of code a folder holds, from its top-level manifest files.
-fn code_kind(dir: &Path) -> Option<&'static str> {
+pub(crate) fn code_kind(dir: &Path) -> Option<&'static str> {
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
     let pkg = read("package.json");
     if pkg.contains("\"next\"") {
@@ -377,27 +377,62 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
         )
     });
 
-    out.push(match &cfg.product {
+    // Logged in to the subscription? Asked of the official CLI; its tokens are never read.
+    let logged_in = std::process::Command::new("claude")
+        .args(["auth", "status", "--json"])
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|v| v["loggedIn"].as_bool());
+    out.push(match logged_in {
+        Some(true) => step(
+            "claude",
+            "Claude 로그인",
+            true,
+            "구독 계정으로 로그인됨".into(),
+            "",
+        ),
+        Some(false) => step(
+            "claude",
+            "Claude 로그인",
+            false,
+            "이 서버의 터미널에서 한 번: claude auth login (구독 계정)".into(),
+            "",
+        ),
         None => step(
-            "product",
-            "제품",
+            "claude",
+            "Claude 로그인",
             false,
-            "제품 이름, 어댑터, 프론트·백엔드를 고릅니다".into(),
-            "settings",
+            "Claude Code CLI가 없습니다: npm i -g @anthropic-ai/claude-code 후 claude auth login"
+                .into(),
+            "",
         ),
-        Some(p) if !abs(ws, &p.adapter).is_file() => step(
+    });
+
+    // The adapter is written from the code (D-049) and checked by building the product map.
+    let has_map = ws.join("map/product-map.json").is_file();
+    out.push(match &cfg.product {
+        Some(p) if abs(ws, &p.adapter).is_file() && has_map => step(
             "product",
-            "제품",
-            false,
-            format!("어댑터 파일이 없습니다: {}", p.adapter),
-            "settings",
-        ),
-        Some(p) => step(
-            "product",
-            "제품",
+            "코드 읽고 제품 파악",
             true,
             p.name.clone().unwrap_or_else(|| "이름 없음".into()),
-            "settings",
+            "command:adapter",
+        ),
+        Some(p) if abs(ws, &p.adapter).is_file() => step(
+            "product",
+            "코드 읽고 제품 파악",
+            false,
+            "어댑터가 있습니다. 제품 지도(메뉴·화면·API)를 만듭니다".into(),
+            "command:map",
+        ),
+        _ => step(
+            "product",
+            "코드 읽고 제품 파악",
+            false,
+            "Claude가 코드를 읽고 메뉴·API·권한·로그인 방식을 찾아 어댑터를 만듭니다 (1~2분)"
+                .into(),
+            "command:adapter",
         ),
     });
 
@@ -482,18 +517,6 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
         }
     });
 
-    let has_map = ws.join("map/product-map.json").is_file();
-    out.push(step(
-        "map",
-        "제품 지도",
-        has_map,
-        if has_map {
-            "만들었습니다".into()
-        } else {
-            "코드에서 메뉴·화면·API를 뽑습니다 (LLM 없음)".into()
-        },
-        "command:map",
-    ));
     let shots = mwa_capture::menus::load_manifest(ws);
     out.push(step(
         "shots",
@@ -621,10 +644,18 @@ mod tests {
         let (cfg, _) = Config::parse(crate::TEMPLATE).unwrap();
         let s = steps(dir.path(), &cfg);
         assert_eq!(s[0].key, "code");
-        // Only the optional format sample counts as done in a new project.
+        let keys: Vec<_> = s.iter().map(|x| x.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "code", "claude", "product", "account", "template", "shots", "manual"
+            ]
+        );
+        // Only the optional format sample counts as done in a new project (the Claude login
+        // depends on this machine).
         let done: Vec<_> = s
             .iter()
-            .filter(|x| x.done)
+            .filter(|x| x.done && x.key != "claude")
             .map(|x| x.key.as_str())
             .collect();
         assert_eq!(done, ["template"]);

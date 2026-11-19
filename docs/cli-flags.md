@@ -50,3 +50,13 @@ claude -p \
 ## Codex CLI, OpenCode
 
 - 2026-11-17 현재 이 서버에 미설치. 설치 후 같은 방식으로 확인해 이 파일에 추가합니다. 그 전까지 어댑터는 가짜 실행 파일로만 테스트합니다.
+
+## 로그인 (install.sh)
+
+`claude auth --help`로 확인 (2026-11-19).
+
+| 명령 | 쓰임 |
+|---|---|
+| `claude auth status --json` | 로그인 여부 확인. `loggedIn`(true/false)만 봅니다 |
+| `claude auth login --claudeai` | 구독 계정으로 로그인 (기본값). `--console`은 API 과금이라 쓰지 않습니다 |
+

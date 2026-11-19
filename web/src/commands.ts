@@ -7,6 +7,7 @@ export interface CommandDef {
 
 export const COMMANDS: CommandDef[] = [
   { name: "map", desc: "코드에서 제품 지도를 다시 만듭니다", remote: true },
+  { name: "adapter", desc: "코드를 읽고 제품 어댑터를 만든 뒤 제품 지도로 확인합니다 (1~2분)", remote: true },
   { name: "shot", desc: "메뉴 화면을 모두 촬영합니다 (2회 비교, 약 5분)", remote: true },
   { name: "gen", desc: "기능의 코드를 읽어 사실을 뽑습니다 (1~2분)", remote: true },
   { name: "sync", desc: "git 소스를 클론하거나 최신으로 맞춥니다", remote: true },

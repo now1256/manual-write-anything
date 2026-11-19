@@ -25,6 +25,8 @@ let nextId = 1;
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  /** A setup step opened in the settings: only its section shows. */
+  const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
   const [setupVersion, setSetupVersion] = useState(0);
   const [map, setMap] = useState<ProductMap | null>(null);
   const [shots, setShots] = useState<ShotsManifest | null>(null);
@@ -106,6 +108,7 @@ export default function App() {
 
   const LABELS: Record<string, string> = {
     map: "제품 지도 생성",
+    adapter: "코드 읽고 제품 파악",
     doctor: "점검",
     shot: "촬영",
     gen: "코드 읽기",
@@ -144,7 +147,10 @@ export default function App() {
       <header className="topbar">
         <span className="brand">mwa</span>
         <ProjectSwitcher current={state?.header.workspace ?? null} />
-        <button className={`topbar-button ${showSettings ? "active" : ""}`} onClick={() => setShowSettings((v) => !v)}>
+        <button className={`topbar-button ${showSettings ? "active" : ""}`} onClick={() => {
+            setSettingsFocus(null);
+            setShowSettings((v) => !v);
+          }}>
           설정
         </button>
         <span className="spacer" />
@@ -162,7 +168,15 @@ export default function App() {
           {loadError ? (
             <div className="empty error">서버에서 정보를 불러오지 못했습니다: {loadError}</div>
           ) : showSettings ? (
-            <SettingsView onClose={() => setShowSettings(false)} onCommand={runCommand} />
+            <SettingsView
+              focus={settingsFocus}
+              onClose={() => {
+                setShowSettings(false);
+                setSettingsFocus(null);
+                setSetupVersion((v) => v + 1);
+              }}
+              onCommand={runCommand}
+            />
           ) : feature ? (
             <FeatureView
               feature={feature}
@@ -174,7 +188,10 @@ export default function App() {
             />
           ) : (
             <>
-              <SetupChecklist version={setupVersion} onCommand={runCommand} onOpenSettings={() => setShowSettings(true)} />
+              <SetupChecklist version={setupVersion} onCommand={runCommand} onOpenSettings={(step) => {
+                  setSettingsFocus(step);
+                  setShowSettings(true);
+                }} />
               <Overview map={map} shots={shots} onCommand={runCommand} onOpen={setSelected} version={setupVersion + manualVersion} />
             </>
           )}

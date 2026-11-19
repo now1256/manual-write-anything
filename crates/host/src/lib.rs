@@ -169,6 +169,11 @@ pub trait Host: Send + Sync + 'static {
         drop(progress);
         Err("이 화면에서는 기존 매뉴얼 장면 촬영을 지원하지 않습니다".into())
     }
+    /// Writes the product adapter from the code and builds the product map (D-049).
+    async fn make_adapter(&self, progress: OnDelta) -> Result<Vec<String>, String> {
+        drop(progress);
+        Err("이 화면에서는 어댑터 만들기를 지원하지 않습니다".into())
+    }
     /// Shoots the picture slots of a feature's written manual (D-046). `feature|<block id>`
     /// shoots that slot only (again, when it has a picture).
     async fn capture_document(

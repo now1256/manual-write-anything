@@ -11,6 +11,8 @@ frontend = "frontend"      # [[source]] 이름
 backend = "backend"
 ```
 
+보통은 직접 쓰지 않습니다. 화면의 **시작하기 → 코드 읽고 제품 파악**(또는 `mwa adapter`)이 코드를 읽어 프로젝트 폴더에 `adapter.toml`을 만들고 제품 지도로 확인합니다. 이 문서는 그 결과를 고치거나 직접 쓸 때 봅니다.
+
 지금 지원하는 구조는 **Next.js(app router) 프론트 + FastAPI 백엔드**입니다. 다른 구조는 파서를 추가해야 합니다.
 
 ## 예시
