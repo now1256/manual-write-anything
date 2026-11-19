@@ -2,12 +2,12 @@ import { faX } from "@fortawesome/free-solid-svg-icons";
 export const LICENSE_HREF = "/settings/license";
 export const MAIN_NAV: NavItem[] = [
   {
-    key: "source",
-    label: "소스",
+    key: "sales",
+    label: "영업",
     icon: faX,
     children: [
-      { key: "source-connections", label: "연결 관리", href: "/source/connections", permissions: ["SRC_LINK_VIEW"] },
-      { key: "nlq-semantic-model", label: "시맨틱 모델", href: "/nlq/semantic-model", permissions: ["QRY_MODEL_VIEW"] },
+      { key: "sales-orders", label: "주문 관리", href: "/sales/orders", permissions: ["ORD_VIEW"] },
+      { key: "report-customer-model", label: "고객 모델", href: "/report/customer-model", permissions: ["RPT_MODEL_VIEW"] },
     ],
   },
 ];

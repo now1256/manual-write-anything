@@ -453,11 +453,11 @@ mod tests {
                 .unwrap();
         let mut app = App::new(Header::default(), Some(map), Status::default());
         assert_eq!(app.context(), None);
-        typed(&mut app, "연결관리 화면 설명해줘");
+        typed(&mut app, "주문관리 화면 설명해줘");
         app.handle_key(key(KeyCode::Enter));
         let ctx = app.context().unwrap();
         assert!(
-            ctx.contains("연결 관리") && ctx.contains("/api/source/systems"),
+            ctx.contains("주문 관리") && ctx.contains("/api/sales/accounts"),
             "{ctx}"
         );
     }

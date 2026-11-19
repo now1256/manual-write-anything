@@ -161,16 +161,16 @@ import { faX } from "x";
 export const LICENSE_HREF = "/settings/license";
 export const MAIN_NAV: NavItem[] = [
   {
-    key: "source",
-    label: "소스",
+    key: "sales",
+    label: "영업",
     icon: faX,
     children: [
-      { key: "conn", label: "연결 관리", href: "/source/connections", permissions: ["SRC_LINK_VIEW"] },
-      { key: "studio", label: "수집 스튜디오", href: "/source/studio", match: "/source/studio",
-        permissionHrefs: [{ permission: "A_VIEW", href: "/source/studio/a" }, { permission: "B_VIEW", href: "/source/studio/b" }] },
+      { key: "conn", label: "주문 관리", href: "/sales/orders", permissions: ["ORD_VIEW"] },
+      { key: "studio", label: "배송 관리", href: "/sales/shipping", match: "/sales/shipping",
+        permissionHrefs: [{ permission: "A_VIEW", href: "/sales/shipping/a" }, { permission: "B_VIEW", href: "/sales/shipping/b" }] },
     ],
   },
-  { key: "ml", label: "ML", licenseMenu: "머신러닝", icon: faX, children: [{ key: "ml-a", label: "A", href: "/ml/a" }] },
+  { key: "bi", label: "BI", licenseMenu: "분석", icon: faX, children: [{ key: "bi-a", label: "A", href: "/bi/a" }] },
 ];
 export const SYS_NAV: NavItem[] = [
   { key: "sys", label: "시스템", icon: faX, children: [{ key: "license", label: "제품 정보", href: LICENSE_HREF, permissions: ["OPS_ACCESS"] }] },
@@ -197,9 +197,9 @@ export const FLAT_NAV: NavItem[] = [
         assert_eq!(menus.len(), 5);
 
         let conn = &menus[0];
-        assert_eq!(conn.group_label.as_deref(), Some("소스"));
-        assert_eq!(conn.permissions, vec!["SRC_LINK_VIEW"]);
-        assert_eq!(conn.license_menu, "소스");
+        assert_eq!(conn.group_label.as_deref(), Some("영업"));
+        assert_eq!(conn.permissions, vec!["ORD_VIEW"]);
+        assert_eq!(conn.license_menu, "영업");
 
         let studio = &menus[1];
         assert_eq!(
@@ -207,9 +207,9 @@ export const FLAT_NAV: NavItem[] = [
             vec!["A_VIEW", "B_VIEW"],
             "permissionHrefs win"
         );
-        assert_eq!(studio.prefix(), "/source/studio");
+        assert_eq!(studio.prefix(), "/sales/shipping");
 
-        assert_eq!(menus[2].license_menu, "머신러닝");
+        assert_eq!(menus[2].license_menu, "분석");
         assert!(menus[2].permissions.is_empty());
 
         assert_eq!(

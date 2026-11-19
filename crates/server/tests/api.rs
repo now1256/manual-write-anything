@@ -46,7 +46,7 @@ impl Host for FakeHost {
         on_delta(last);
         // Context reaches the host when a feature is selected or named.
         on_delta(
-            if context.is_some_and(|c| c.contains("/api/source/systems")) {
+            if context.is_some_and(|c| c.contains("/api/sales/accounts")) {
                 "|ctx"
             } else {
                 "|noctx"
@@ -305,7 +305,7 @@ async fn websocket_chat_streams_and_commands_run() {
     assert_eq!(first[0]["status"]["budget_usd"], 5.0);
 
     let chat = json!({"type": "chat", "id": 1, "selected": null,
-        "transcript": [{"who": "user", "text": "연결관리 알려줘"}]});
+        "transcript": [{"who": "user", "text": "주문관리 알려줘"}]});
     ws.send(Message::Text(chat.to_string().into()))
         .await
         .unwrap();
@@ -315,7 +315,7 @@ async fn websocket_chat_streams_and_commands_run() {
         .filter(|m| m["type"] == "delta")
         .map(|m| m["text"].as_str().unwrap())
         .collect();
-    assert_eq!(text, "echo:연결관리 알려줘|ctx");
+    assert_eq!(text, "echo:주문관리 알려줘|ctx");
 
     let cmd = json!({"type": "command", "id": 2, "name": "map"});
     ws.send(Message::Text(cmd.to_string().into()))

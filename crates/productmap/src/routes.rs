@@ -449,9 +449,9 @@ mod tests {
         );
         write(
             r,
-            "src/lib/api/nlq/proxy.ts",
+            "src/lib/api/report/proxy.ts",
             r#"async function proxyQuery(base, req, path, opts) { return callUpstream(req, `${base}${path}?x`, {}); }
-export const proxyQueryFlows = (req, path, opts) => proxyQuery("/nlq/query-flows", req, path, opts);"#,
+export const proxyQueryFlows = (req, path, opts) => proxyQuery("/report/query-flows", req, path, opts);"#,
         );
         write(
             r,
@@ -474,8 +474,8 @@ export async function DELETE(req) { return forward(req, { path: `/jobs/${id}`, m
         );
         write(
             r,
-            "src/app/api/nlq/flows/[id]/route.ts",
-            r#"import { proxyQueryFlows } from "@/src/lib/api/nlq/proxy";
+            "src/app/api/report/flows/[id]/route.ts",
+            r#"import { proxyQueryFlows } from "@/src/lib/api/report/proxy";
 export const PATCH = (req, ctx) => proxyQueryFlows(req, `/${encodeURIComponent(id)}`, { method: "PATCH", fallback: "x" });
 async function handler(req) { return proxyQueryFlows(req, "", { fallback: "x" }); }
 export { handler as GET };"#,
@@ -507,8 +507,8 @@ export async function GET(req) { return load(req, "/x"); }"#,
             "POST /api/sys/{} -> POST /systems/test [sink]",
             "GET /api/emb/jobs/{} -> GET /embedding-training/jobs/{} [factory]",
             "DELETE /api/emb/jobs/{} -> DELETE /embedding-training/jobs/{} [factory]",
-            "PATCH /api/nlq/flows/{} -> PATCH /nlq/query-flows/{} [prefixed-wrapper]",
-            "GET /api/nlq/flows/{} -> GET /nlq/query-flows [prefixed-wrapper]",
+            "PATCH /api/report/flows/{} -> PATCH /report/query-flows/{} [prefixed-wrapper]",
+            "GET /api/report/flows/{} -> GET /report/query-flows [prefixed-wrapper]",
             "POST /api/auth/login -> POST /auth/login [direct]",
             "GET /api/auth/me -> ?",
         ] {

@@ -499,8 +499,8 @@ mod tests {
     fn context_from_selection_and_mentions() {
         let m = mini();
         assert_eq!(chat_context(&m, None, "안녕하세요"), None);
-        let by_name = chat_context(&m, None, "연결관리 화면 설명해줘").unwrap();
-        assert!(by_name.contains("연결 관리") && by_name.contains("/api/source/systems"));
+        let by_name = chat_context(&m, None, "주문관리 화면 설명해줘").unwrap();
+        assert!(by_name.contains("주문 관리") && by_name.contains("/api/sales/accounts"));
         let by_sel = chat_context(&m, Some("license"), "이거 뭐야").unwrap();
         assert!(by_sel.contains("제품 정보"));
         assert!(chat_context(&m, Some("nope"), "").is_none());

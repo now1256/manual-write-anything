@@ -72,7 +72,7 @@ impl Cookie {
 #[derive(Debug, Clone, Serialize)]
 pub struct JobShot {
     pub id: String,
-    /// Path on the product UI, e.g. `/source/connections`.
+    /// Path on the product UI, e.g. `/sales/orders`.
     pub path: String,
     pub out: PathBuf,
     /// Interactions after the page settles (detail shots); empty for a plain page.

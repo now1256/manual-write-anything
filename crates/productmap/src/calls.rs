@@ -193,15 +193,15 @@ mod tests {
         write(
             r,
             "src/lib/api/base.ts",
-            r#"export const SYS = "/api/source/systems";"#,
+            r#"export const SYS = "/api/sales/accounts";"#,
         );
         write(
             r,
             "src/lib/api/f.ts",
             r#"import { SYS } from "./base";
 const LOCAL = "/api/local";
-export const list = (db) => apiFetch(`/api/source/systems?db=${db}`);
-export const del = (id, db) => apiFetch(`/api/source/systems/${id}?db=${db}`, { method: "delete" });
+export const list = (db) => apiFetch(`/api/sales/accounts?db=${db}`);
+export const del = (id, db) => apiFetch(`/api/sales/accounts/${id}?db=${db}`, { method: "delete" });
 export const sum = () => apiFetch(`${SYS}/summary`);
 export const loc = () => apiFetch(LOCAL, { method: "POST" });
 export const viaVar = (id) => { const url = `/api/x/${id}/test`; return apiFetch(url, { method: "POST" }); };
@@ -220,9 +220,9 @@ export const hook = () => useStream(`/api/board/${id}/events`);
         .unwrap();
         let got = paths(&calls);
         for want in [
-            ("GET", "/api/source/systems"),
-            ("DELETE", "/api/source/systems/{}"),
-            ("GET", "/api/source/systems/summary"),
+            ("GET", "/api/sales/accounts"),
+            ("DELETE", "/api/sales/accounts/{}"),
+            ("GET", "/api/sales/accounts/summary"),
             ("POST", "/api/local"),
             ("POST", "/api/x/{}/test"),
             ("GET", "/api/stream"),
@@ -248,8 +248,8 @@ export const hook = () => useStream(`/api/board/${id}/events`);
         let r = dir.path();
         write(
             r,
-            "src/lib/api/nlq.ts",
-            r#"const BASE = "/api/nlq/semantic-models";
+            "src/lib/api/report.ts",
+            r#"const BASE = "/api/report/customer-models";
 const url = (db: string, path = "", params?: Record<string, string>) => {
   const qs = new URLSearchParams({ db });
   return `${BASE}${path}?${qs}`;
@@ -265,14 +265,14 @@ export const d = (db, id) => apiFetch(`${jobPath(id)}/train?${dbQuery(db)}`, { m
         );
         let mut p = Project::new(r, "@/");
         let (calls, unresolved) =
-            client_calls(&mut p, &whole(r, "src/lib/api/nlq.ts"), &["apiFetch"]).unwrap();
+            client_calls(&mut p, &whole(r, "src/lib/api/report.ts"), &["apiFetch"]).unwrap();
         assert!(unresolved.is_empty(), "{unresolved:?}");
         let got = paths(&calls);
         for want in [
-            ("GET", "/api/nlq/semantic-models"),
-            ("GET", "/api/nlq/semantic-models/summary"),
-            ("PATCH", "/api/nlq/semantic-models/{}"),
-            ("POST", "/api/nlq/semantic-models/jobs/{}/train"),
+            ("GET", "/api/report/customer-models"),
+            ("GET", "/api/report/customer-models/summary"),
+            ("PATCH", "/api/report/customer-models/{}"),
+            ("POST", "/api/report/customer-models/jobs/{}/train"),
         ] {
             assert!(
                 got.contains(&(want.0.to_string(), want.1.to_string())),

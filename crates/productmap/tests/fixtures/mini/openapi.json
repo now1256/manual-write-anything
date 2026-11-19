@@ -22,7 +22,7 @@
     "operationId": "test_system"
    }
   },
-  "/nlq/semantic-models": {
+  "/report/customer-models": {
    "get": {
     "operationId": "list_models"
    }

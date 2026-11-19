@@ -190,7 +190,7 @@ mod tests {
 PERMISSION_NAMES: dict[str, str] = {
     # comment with "quotes": "ignored"
     "AUDIT_ACCESS": "설정 > 감사 로그 > 접근",
-    "SRC_LINK_VIEW": "소스 > 연결 관리 > 원천 시스템 > 목록 조회",
+    "ORD_VIEW": "영업 > 주문 관리 > 주문 > 목록 조회",
 }
 
 FREE_MENUS: frozenset[str] = frozenset({"설정", "모니터링"})

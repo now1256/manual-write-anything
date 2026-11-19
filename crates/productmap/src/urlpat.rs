@@ -1,4 +1,4 @@
-//! Turns string/template literal parts into path templates like `/api/source/systems/{}`.
+//! Turns string/template literal parts into path templates like `/api/sales/accounts/{}`.
 
 use crate::ts::Part;
 

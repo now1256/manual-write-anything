@@ -237,7 +237,7 @@ mod tests {
         let s = snapshot(&FakeHost, 100, 24, false);
         assert!(s.contains("mwa"), "{s}");
         assert!(s.contains("기능 5"), "{s}");
-        assert!(s.contains("연결 관리"), "{s}");
+        assert!(s.contains("주문 관리"), "{s}");
         assert!(s.contains("제품 지도를 불러왔습니다"), "{s}");
         assert!(s.contains("claude·sonnet"), "{s}");
         assert!(s.contains("$0.42 / $5.00"), "{s}");
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn renders_feature_detail() {
         let s = snapshot(&FakeHost, 110, 30, true);
-        assert!(s.contains("/api/source/systems"), "{s}");
-        assert!(s.contains("SRC_LINK_VIEW"), "{s}");
+        assert!(s.contains("/api/sales/accounts"), "{s}");
+        assert!(s.contains("ORD_VIEW"), "{s}");
     }
 }

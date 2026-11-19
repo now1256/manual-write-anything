@@ -6,56 +6,56 @@
     "backend_sha": null,
     "openapi": {
       "origin": "fixtures/mini/openapi.json",
-      "sha256": "4c658ac94e461d6a1d2422d0527450896d812ece248812e372252fd59ec10994",
+      "sha256": "f72e0fb1852a7c20e1585c025c60d1fa7f07bc11c96996223d4ff80ae5e96624",
       "operations": 9
     }
   },
   "features": [
     {
-      "key": "source-connections",
+      "key": "sales-orders",
       "section": "MAIN_NAV",
-      "group": "소스",
-      "label": "연결 관리",
-      "href": "/source/connections",
+      "group": "영업",
+      "label": "주문 관리",
+      "href": "/sales/orders",
       "permissions": [
-        "SRC_LINK_VIEW"
+        "ORD_VIEW"
       ],
-      "license_menu": "소스",
+      "license_menu": "영업",
       "nav_line": 9,
       "screens": [
         {
-          "route": "/source/connections",
-          "file": "src/app/(app)/source/connections/page.tsx",
+          "route": "/sales/orders",
+          "file": "src/app/(app)/sales/orders/page.tsx",
           "kind": "menu",
           "reached_files": 6,
           "ui_permissions": [
-            "SRC_LINK_CREATE",
-            "SRC_LINK_EDIT"
+            "ORD_CREATE",
+            "ORD_EDIT"
           ],
           "apis": [
             {
               "method": "DELETE",
-              "path": "/api/source/systems",
-              "client": "src/lib/api/source/systems/fetcher.ts:5",
-              "proxy": "src/app/api/source/systems/route.ts:4",
+              "path": "/api/sales/accounts",
+              "client": "src/lib/api/sales/accounts/fetcher.ts:5",
+              "proxy": "src/app/api/sales/accounts/route.ts:4",
               "backend": "DELETE /systems",
               "operation": "DELETE /systems",
               "operation_id": "delete_systems"
             },
             {
               "method": "GET",
-              "path": "/api/source/systems",
-              "client": "src/lib/api/source/systems/fetcher.ts:2",
-              "proxy": "src/app/api/source/systems/route.ts:2",
+              "path": "/api/sales/accounts",
+              "client": "src/lib/api/sales/accounts/fetcher.ts:2",
+              "proxy": "src/app/api/sales/accounts/route.ts:2",
               "backend": "GET /systems",
               "operation": "GET /systems",
               "operation_id": "list_systems"
             },
             {
               "method": "POST",
-              "path": "/api/source/systems",
-              "client": "src/lib/api/source/systems/fetcher.ts:4",
-              "proxy": "src/app/api/source/systems/route.ts:3",
+              "path": "/api/sales/accounts",
+              "client": "src/lib/api/sales/accounts/fetcher.ts:4",
+              "proxy": "src/app/api/sales/accounts/route.ts:3",
               "backend": "POST /systems",
               "operation": "POST /systems",
               "operation_id": "create_system"
@@ -63,17 +63,17 @@
           ]
         },
         {
-          "route": "/source/connections/{id}",
-          "file": "src/app/(app)/source/connections/[id]/page.tsx",
+          "route": "/sales/orders/{id}",
+          "file": "src/app/(app)/sales/orders/[id]/page.tsx",
           "kind": "menu_detail",
           "reached_files": 3,
           "ui_permissions": [],
           "apis": [
             {
               "method": "GET",
-              "path": "/api/source/systems/{}",
-              "client": "src/lib/api/source/systems/fetcher.ts:3",
-              "proxy": "src/app/api/source/systems/[id]/route.ts:2",
+              "path": "/api/sales/accounts/{}",
+              "client": "src/lib/api/sales/accounts/fetcher.ts:3",
+              "proxy": "src/app/api/sales/accounts/[id]/route.ts:2",
               "backend": "GET /systems/{}",
               "operation": "GET /systems/{system_id}",
               "operation_id": "get_system"
@@ -83,39 +83,39 @@
       ]
     },
     {
-      "key": "nlq-semantic-model",
+      "key": "report-customer-model",
       "section": "MAIN_NAV",
-      "group": "소스",
-      "label": "시맨틱 모델",
-      "href": "/nlq/semantic-model",
+      "group": "영업",
+      "label": "고객 모델",
+      "href": "/report/customer-model",
       "permissions": [
-        "QRY_MODEL_VIEW"
+        "RPT_MODEL_VIEW"
       ],
-      "license_menu": "소스",
+      "license_menu": "영업",
       "nav_line": 10,
       "screens": [
         {
-          "route": "/nlq/semantic-model",
-          "file": "src/app/(app)/nlq/semantic-model/page.tsx",
+          "route": "/report/customer-model",
+          "file": "src/app/(app)/report/customer-model/page.tsx",
           "kind": "menu",
           "reached_files": 3,
           "ui_permissions": [],
           "apis": [
             {
               "method": "GET",
-              "path": "/api/nlq/semantic-models",
-              "client": "src/lib/api/nlq/semantic-model/index.ts:4",
-              "proxy": "src/app/api/nlq/semantic-models/route.ts:2",
-              "backend": "GET /nlq/semantic-models",
-              "operation": "GET /nlq/semantic-models",
+              "path": "/api/report/customer-models",
+              "client": "src/lib/api/report/customer-model/index.ts:4",
+              "proxy": "src/app/api/report/customer-models/route.ts:2",
+              "backend": "GET /report/customer-models",
+              "operation": "GET /report/customer-models",
               "operation_id": "list_models"
             },
             {
               "method": "GET",
-              "path": "/api/nlq/semantic-models/summary",
-              "client": "src/lib/api/nlq/semantic-model/index.ts:5",
-              "proxy": "src/app/api/nlq/semantic-models/summary/route.ts:2",
-              "backend": "GET /nlq/semantic-models/summary",
+              "path": "/api/report/customer-models/summary",
+              "client": "src/lib/api/report/customer-model/index.ts:5",
+              "proxy": "src/app/api/report/customer-models/summary/route.ts:2",
+              "backend": "GET /report/customer-models/summary",
               "operation": null,
               "operation_id": null
             }
@@ -255,46 +255,46 @@
       "ui_pages": []
     },
     {
-      "code": "QRY_MODEL_VIEW",
-      "label": "NLQ > 시맨틱 모델 > 시맨틱 모델 > 목록 조회",
-      "license_menu": "NLQ",
+      "code": "ORD_CREATE",
+      "label": "영업 > 주문 관리 > 주문 > 등록",
+      "license_menu": "영업",
+      "licensable": true,
+      "server": [],
+      "menus": [],
+      "ui_pages": [
+        "/sales/orders"
+      ]
+    },
+    {
+      "code": "ORD_EDIT",
+      "label": "영업 > 주문 관리 > 주문 > 수정",
+      "license_menu": "영업",
+      "licensable": true,
+      "server": [],
+      "menus": [],
+      "ui_pages": [
+        "/sales/orders"
+      ]
+    },
+    {
+      "code": "ORD_VIEW",
+      "label": "영업 > 주문 관리 > 주문 > 목록 조회",
+      "license_menu": "영업",
       "licensable": true,
       "server": [],
       "menus": [
-        "nlq-semantic-model"
+        "sales-orders"
       ],
       "ui_pages": []
     },
     {
-      "code": "SRC_LINK_CREATE",
-      "label": "소스 > 연결 관리 > 원천 시스템 > 등록",
-      "license_menu": "소스",
-      "licensable": true,
-      "server": [],
-      "menus": [],
-      "ui_pages": [
-        "/source/connections"
-      ]
-    },
-    {
-      "code": "SRC_LINK_EDIT",
-      "label": "소스 > 연결 관리 > 원천 시스템 > 수정",
-      "license_menu": "소스",
-      "licensable": true,
-      "server": [],
-      "menus": [],
-      "ui_pages": [
-        "/source/connections"
-      ]
-    },
-    {
-      "code": "SRC_LINK_VIEW",
-      "label": "소스 > 연결 관리 > 원천 시스템 > 목록 조회",
-      "license_menu": "소스",
+      "code": "RPT_MODEL_VIEW",
+      "label": "분석 > 고객 모델 > 고객 모델 > 목록 조회",
+      "license_menu": "분석",
       "licensable": true,
       "server": [],
       "menus": [
-        "source-connections"
+        "report-customer-model"
       ],
       "ui_pages": []
     }
@@ -307,7 +307,7 @@
     ],
     "missing_backend_operations": [
       "GET /monitoring/stream <- GET /api/monitoring/stream (src/app/api/monitoring/stream/route.ts:2)",
-      "GET /nlq/semantic-models/summary <- GET /api/nlq/semantic-models/summary (src/app/api/nlq/semantic-models/summary/route.ts:2)"
+      "GET /report/customer-models/summary <- GET /api/report/customer-models/summary (src/app/api/report/customer-models/summary/route.ts:2)"
     ],
     "unknown_permission_codes": []
   },
