@@ -60,6 +60,9 @@ pub struct RefDoc {
     /// Marked as not documenting any feature (e.g. the login page).
     #[serde(default)]
     pub ignored: bool,
+    /// A person set its pairing (linked, unlinked or replaced): never matched by title again.
+    #[serde(default)]
+    pub chosen: bool,
     pub pages: u32,
     pub imported_at: u64,
     pub images: Vec<RefImage>,
@@ -507,6 +510,7 @@ pub fn import(ws: &Path, pdf: &Path, features: &[FeatureRef]) -> Result<RefDoc, 
 
     let doc = RefDoc {
         ignored: false,
+        chosen: false,
         feature: match_feature(&title, tag.as_deref(), features),
         id,
         title,
@@ -957,11 +961,13 @@ pub fn link(ws: &Path, feature: &str, id: &str) -> Result<RefDoc, ManualError> {
     for mut other in list(ws) {
         if other.id != id && other.feature.as_deref() == Some(feature) {
             other.feature = None;
+            other.chosen = true;
             save(ws, &other)?;
         }
     }
     doc.feature = Some(feature.to_string());
     doc.ignored = false;
+    doc.chosen = true;
     save(ws, &doc)?;
     Ok(doc)
 }
@@ -972,6 +978,7 @@ pub fn unlink(ws: &Path, feature: &str) -> Result<(), ManualError> {
     for mut d in list(ws) {
         if d.feature.as_deref() == Some(feature) {
             d.feature = None;
+            d.chosen = true;
             save(ws, &d)?;
         }
     }
@@ -994,6 +1001,7 @@ fn import_markdown(ws: &Path, md: &Path, features: &[FeatureRef]) -> Result<RefD
     std::fs::write(dir.join("text.txt"), &text).map_err(io(&dir))?;
     let doc = RefDoc {
         ignored: false,
+        chosen: false,
         feature: match_feature(&title, tag.as_deref(), features),
         id,
         title,
@@ -1206,6 +1214,7 @@ mod tests {
                 source: "d.pdf".into(),
                 feature: Some("f".into()),
                 ignored: false,
+                chosen: false,
                 pages: 2,
                 imported_at: 0,
                 images: vec![img("img/a.png", 1), img("img/b.png", 2)],

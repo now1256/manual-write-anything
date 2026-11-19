@@ -781,3 +781,4 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .auto-runs tr.failed td { color: var(--err); }
 .auto-runs summary { cursor: pointer; }
 .auto-runs ul { margin: 4px 0 0; padding-left: 18px; color: var(--fg); }
+.tab:disabled { opacity: .4; cursor: not-allowed; }

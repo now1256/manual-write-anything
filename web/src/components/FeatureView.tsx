@@ -24,6 +24,11 @@ interface Props {
 export default function FeatureView({ feature, permissions, manualVersion, refVersion, onCommand, onClose }: Props) {
   const [tab, setTab] = useState<Tab>("① 기존 매뉴얼");
   // A feature without an old manual starts at ③ (write from code).
+  /** An old manual is paired: without one there are no pictures to choose (②). */
+  const [paired, setPaired] = useState(true);
+  /** Bumped when ① links or unlinks an old manual. */
+  const [linked, setLinked] = useState(0);
+  // Opening a feature without an old manual starts at ③.
   useEffect(() => {
     let live = true;
     fetchReferences()
@@ -35,6 +40,15 @@ export default function FeatureView({ feature, permissions, manualVersion, refVe
       live = false;
     };
   }, [feature.key]);
+  useEffect(() => {
+    let live = true;
+    fetchReferences()
+      .then((l) => live && setPaired(l.items.some((d) => d.feature === feature.key && !d.ignored)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [feature.key, refVersion, linked]);
   /** Picture to scroll to after switching tabs; `n` re-triggers the same picture. */
   const [focus, setFocus] = useState<{ image: string; n: number } | null>(null);
   const goto = (to: Tab, image: string) => {
@@ -61,6 +75,8 @@ export default function FeatureView({ feature, permissions, manualVersion, refVe
             role="tab"
             aria-selected={t === tab}
             className={`tab ${t === tab ? "on" : ""} ${i < STEPS.length ? "step-tab" : ""} ${i === STEPS.length ? "tab-gap" : ""}`}
+            disabled={t === "② 그림 고르기" && !paired}
+            title={t === "② 그림 고르기" && !paired ? "기존 매뉴얼이 연결되어 있지 않습니다. 그림은 ④의 그림 자리로 찍습니다" : undefined}
             onClick={() => setTab(t)}
           >
             {t}
@@ -134,7 +150,7 @@ export default function FeatureView({ feature, permissions, manualVersion, refVe
         )}
         {/* Kept mounted so unsaved edits survive tab switches. */}
         {tab === "① 기존 매뉴얼" && (
-          <SourceStep featureKey={feature.key} version={refVersion} onCommand={onCommand} onNext={() => setTab("② 그림 고르기")} />
+          <SourceStep featureKey={feature.key} version={refVersion} onCommand={onCommand} onNext={() => setTab("② 그림 고르기")} onLinked={() => setLinked((n) => n + 1)} />
         )}
         {tab === "② 그림 고르기" && (
           <ReferenceView

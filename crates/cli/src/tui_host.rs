@@ -176,9 +176,10 @@ impl Host for CliHost {
             .collect();
         let mut out = Vec::new();
         for mut d in reference::list(&self.ws) {
-            // Match documents imported before the product map existed.
+            // Match documents imported before the product map existed, unless a person chose.
             if d.feature.is_none()
                 && !d.ignored
+                && !d.chosen
                 && let Some(k) = reference::match_feature(&d.title, d.tag.as_deref(), &features)
             {
                 d.feature = Some(k);

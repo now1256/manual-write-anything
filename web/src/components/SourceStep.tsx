@@ -11,10 +11,12 @@ interface Props {
   version: number;
   onCommand: (name: string, arg?: string) => void;
   onNext: () => void;
+  /** The paired old manual changed (linked, uploaded or unlinked). */
+  onLinked: () => void;
 }
 
 /** Step ①: the old manual (PDF) this feature's manual starts from. */
-export default function SourceStep({ featureKey, version, onCommand, onNext }: Props) {
+export default function SourceStep({ featureKey, version, onCommand, onNext, onLinked }: Props) {
   const [all, setAll] = useState<RefSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -34,6 +36,7 @@ export default function SourceStep({ featureKey, version, onCommand, onNext }: P
       setErr("");
       await linkReference(featureKey, id);
       setReload((n) => n + 1);
+      onLinked();
     } catch (x) {
       setErr(String((x as Error).message ?? x));
     }
@@ -44,6 +47,7 @@ export default function SourceStep({ featureKey, version, onCommand, onNext }: P
       setBusy(true);
       await uploadReference(featureKey, f);
       setReload((n) => n + 1);
+      onLinked();
     } catch (x) {
       setErr(String((x as Error).message ?? x));
     } finally {
