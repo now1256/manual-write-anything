@@ -1,9 +1,9 @@
 // Smoke test of the web screens against a running engine (no product names: works for any project).
-// Usage: start `mwa serve`, then `MWA_URL=http://127.0.0.1:7700 npm run e2e -- <out-dir>`.
+// Usage: start `mwa serve`, then `MWA_URL=http://127.0.0.1:7000 npm run e2e -- <out-dir>`.
 // Makes one real helper call (Claude) when the first feature with a manual document has one.
 import { chromium } from "playwright";
 
-const url = process.env.MWA_URL ?? "http://127.0.0.1:7700";
+const url = process.env.MWA_URL ?? "http://127.0.0.1:7000";
 const out = process.argv[2] ?? ".";
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });

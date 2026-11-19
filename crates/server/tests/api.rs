@@ -270,11 +270,27 @@ async fn foreign_origin_and_host_are_rejected() {
 }
 
 #[tokio::test]
-async fn non_loopback_bind_is_refused() {
-    let err = mwa_server::bind("0.0.0.0:0".parse().unwrap())
+async fn internal_network_access_by_ip() {
+    // Opens on every address; people reach it at the server's IP (D-048).
+    assert!(mwa_server::bind("0.0.0.0:0".parse().unwrap()).await.is_ok());
+    let base = start().await;
+    let c = reqwest::Client::new();
+    let same = c
+        .get(format!("http://{base}/api/state"))
+        .header("host", "10.1.2.3:7000")
+        .header("origin", "http://10.1.2.3:7000")
+        .send()
         .await
-        .unwrap_err();
-    assert!(err.to_string().contains("루프백"));
+        .unwrap();
+    assert_eq!(same.status(), 200, "the page at the server's IP");
+    let other = c
+        .get(format!("http://{base}/api/state"))
+        .header("host", "10.1.2.3:7000")
+        .header("origin", "http://10.9.9.9:7000")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other.status(), 403, "another site's page");
 }
 
 async fn recv_until(

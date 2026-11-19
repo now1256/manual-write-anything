@@ -54,7 +54,8 @@ enum Cmd {
     },
     /// 데스크톱 화면용 서버를 127.0.0.1에서 엽니다. 맥에서는 SSH 터널로 접속합니다
     Serve {
-        #[arg(long, default_value = "127.0.0.1:7700")]
+        /// 열 주소. 기본은 이 서버의 모든 주소 7000번: 사내망에서 http://<서버 IP>:7000 으로 접속
+        #[arg(long, default_value = "0.0.0.0:7000")]
         addr: std::net::SocketAddr,
         /// 개발용: 내장 화면 대신 이 폴더(web/dist)의 화면을 매번 읽습니다. 화면만 바뀌면 새로고침으로 반영됩니다
         #[arg(long, value_name = "DIR")]
@@ -62,6 +63,8 @@ enum Cmd {
     },
     /// 작업 공간을 만들고 소스의 현재 커밋을 기록합니다
     Init,
+    /// 촬영용 브라우저(Playwright + Chromium)를 데이터 폴더에 설치합니다 (화면의 "브라우저 설치"와 같음)
+    Browser,
     /// 설치·로그인·소스 상태를 점검합니다
     Doctor {
         /// 백엔드 최소 호출을 건너뜁니다
@@ -256,6 +259,14 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
     match cmd {
         Cmd::Ui { snapshot, feature } => ui(cli_workspace, snapshot, feature).await,
         Cmd::Init => init(cli_workspace),
+        Cmd::Browser => {
+            ensure_project(cli_workspace)?;
+            let cfg = load_config(cli_workspace)?;
+            for l in install_browser(&cfg, |l| println!("{l}"))? {
+                println!("{l}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Serve { addr, web_dir } => serve(cli_workspace, addr, web_dir).await,
         Cmd::Doctor { no_call } => doctor(cli_workspace, no_call).await,
         Cmd::Map {
@@ -478,18 +489,23 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
     }
 }
 
-async fn serve(
-    ws: &Path,
-    addr: std::net::SocketAddr,
-    web_dir: Option<PathBuf>,
-) -> Result<ExitCode> {
-    // A new folder becomes a project, as in the desktop app.
+/// A new folder becomes a project, as in the desktop app.
+fn ensure_project(ws: &Path) -> Result<()> {
     if !ws.join(CONFIG_FILE).exists() {
         std::fs::create_dir_all(ws)?;
         std::fs::write(ws.join(CONFIG_FILE), TEMPLATE)?;
         std::fs::write(ws.join(".gitignore"), format!("{STATE_DIR}/\n"))?;
         println!("새 프로젝트를 만들었습니다: {}", ws.display());
     }
+    Ok(())
+}
+
+async fn serve(
+    ws: &Path,
+    addr: std::net::SocketAddr,
+    web_dir: Option<PathBuf>,
+) -> Result<ExitCode> {
+    ensure_project(ws)?;
     let host = std::sync::Arc::new(tui_host::CliHost::open(ws)?);
     let registry = projects::Registry::new(&projects::data_dir());
     let ws_abs = std::fs::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
@@ -499,10 +515,20 @@ async fn serve(
     let hub = mwa_server::Hub::new(host, Some(std::sync::Arc::new(registry)));
     let listener = mwa_server::bind(addr).await?;
     let port = listener.local_addr()?.port();
-    println!("mwa serve: http://{addr}");
-    println!(
-        "맥에서 접속: ssh -L {port}:localhost:{port} <사용자>@<서버> 후 브라우저로 http://localhost:{port}"
-    );
+    if addr.ip().is_unspecified() {
+        // The address others type: the one this machine uses on its network.
+        let ip = std::net::UdpSocket::bind("0.0.0.0:0")
+            .and_then(|u| {
+                u.connect("10.254.254.254:1")?;
+                u.local_addr()
+            })
+            .map(|a| a.ip().to_string())
+            .unwrap_or_else(|_| "<서버 IP>".into());
+        println!("mwa serve: http://{ip}:{port}  (이 서버: http://localhost:{port})");
+        println!("같은 사내망에서 위 주소로 접속합니다. 접속 비밀번호는 없습니다.");
+    } else {
+        println!("mwa serve: http://{addr}");
+    }
     if let Some(d) = &web_dir {
         println!("화면 폴더(개발 모드): {}", d.display());
     }

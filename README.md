@@ -68,6 +68,8 @@ flowchart LR
 
 ### 준비물
 
+서버 한 대에만 있으면 됩니다. `install.sh`가 확인하고, 없는 것은 설치하거나 설치 방법을 알려 줍니다.
+
 | 무엇 | 왜 | 설치 |
 |---|---|---|
 | Rust (stable) | 엔진 빌드 | <https://rustup.rs> |
@@ -77,22 +79,33 @@ flowchart LR
 
 > 💡 LLM은 API 키가 아니라 **구독으로 로그인된 공식 CLI**를 하위 프로세스로 실행해서 씁니다. 화면에 보이는 금액은 정가로 바꿔 본 값입니다.
 
-### 설치
+### 설치 — 서버에 한 번
 
 ```sh
 git clone https://github.com/now1256/manual-write-anything.git
 cd manual-write-anything
-(cd web && npm ci && npm run build)   # 화면 (엔진 바이너리에 내장됨)
-cargo install --path crates/cli       # → ~/.cargo/bin/mwa
+./install.sh
 ```
 
-`mwa` 하나에 엔진·화면·촬영 스크립트가 모두 들어 있습니다. 촬영 브라우저(Playwright + Chromium)는 처음 쓸 때 화면의 **"브라우저 설치"**가 데이터 폴더에 받습니다.
+`install.sh`가 하는 일:
+1. 준비물 확인 — 없으면 Rust와 Claude CLI는 설치하고, Node·poppler는 설치 방법을 알려 줍니다
+2. 화면과 엔진을 빌드해 `~/.cargo/bin/mwa`로 설치합니다 (엔진·화면·촬영 스크립트가 파일 하나에)
+3. 프로젝트 폴더와 포트(기본 7000)를 묻고, 촬영 브라우저(Playwright + Chromium)를 받습니다
+4. 원하면 systemd 서비스로 등록해 서버가 켜질 때 자동으로 띄웁니다
+5. 접속 주소를 알려 줍니다
 
-### 실행
+그리고 이 서버에서 `claude`를 한 번 실행해 **구독 계정으로 로그인**합니다. 모든 사용자의 작업이 이 계정으로 돌아갑니다.
+
+### 접속 — 사내망 누구나
+
+```
+http://<서버 IP>:7000
+```
+
+브라우저로 위 주소에 들어가면 끝입니다. 쓰는 사람은 아무것도 설치하지 않습니다. 서비스로 등록하지 않았다면 직접 띄웁니다.
 
 ```sh
-mwa -C ~/manuals/acme serve     # 빈 폴더면 프로젝트를 만듭니다
-# → http://127.0.0.1:7700
+mwa -C ~/manuals/acme serve     # 기본 0.0.0.0:7000 · 빈 폴더면 프로젝트를 만듭니다
 ```
 
 화면의 **시작하기**가 남은 단계를 순서대로 안내합니다.
@@ -101,10 +114,17 @@ mwa -C ~/manuals/acme serve     # 빈 폴더면 프로젝트를 만듭니다
 2. **제품 지도** — 코드에서 메뉴·화면·API·권한을 뽑습니다
 3. **전체 점검** — Node, 브라우저, Claude 로그인, PDF 도구를 확인합니다
 
-> 다른 PC에서 서버의 엔진을 쓰려면 SSH 터널로 붙습니다 (엔진은 `127.0.0.1`에만 열립니다).
-> ```sh
-> ssh -t -L 7700:localhost:7700 <서버> mwa -C <프로젝트> serve
-> ```
+> ⚠️ 접속 비밀번호가 없습니다. **사내망 안에서만** 여세요. 주소창에 IP로 들어온 요청과 이 화면 자신이 보낸 요청만 받아서, 다른 웹사이트가 몰래 요청을 보내는 것은 막습니다.
+
+### 서버 운영
+
+| 하고 싶은 일 | 명령 |
+|---|---|
+| 상태 보기 | `systemctl --user status mwa` (root로 설치했으면 `--user` 없이) |
+| 다시 띄우기 | `systemctl --user restart mwa` |
+| 로그 보기 | `journalctl --user -u mwa -f` |
+| 새 버전으로 업데이트 | `git pull && ./install.sh` |
+| 방화벽 열기 (Ubuntu) | `sudo ufw allow 7000/tcp` |
 
 ## 🖥️ 화면 사용법
 
@@ -165,7 +185,8 @@ PDF·MD를 올리거나 고릅니다. **"장면 설명 만들기"**로 그림마
 | `mwa doc write <기능>` | 매뉴얼 쓰기 (`--fresh`: 기존 매뉴얼 없이 처음부터) |
 | `mwa shot doc --only <기능>` | 그림 자리 찍기 (`--scene <블록 id,…>`: 일부만) |
 | `mwa doc update <기능>` | 코드 기준 갱신 제안 |
-| `mwa serve` | 화면 |
+| `mwa serve` | 화면 (기본 `0.0.0.0:7000`, `--addr`로 바꿈) |
+| `mwa browser` | 촬영용 브라우저 설치 |
 
 모든 명령은 `mwa -C <프로젝트 폴더> …` 형태로 씁니다.
 

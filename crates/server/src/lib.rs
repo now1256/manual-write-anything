@@ -1,5 +1,6 @@
 //! `mwa serve`: the engine behind a local HTTP + WebSocket API and the embedded web UI.
-//! Listens on loopback only; remote clients come in through an SSH tunnel (D-026).
+//! Opens on the internal network (D-048): people reach it at the server's IP address. Requests
+//! must name the server by IP or localhost (no DNS rebinding) and come from its own page.
 
 mod protocol;
 mod ws;
@@ -27,8 +28,6 @@ struct WebAssets;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
-    #[error("{0}은 루프백 주소가 아닙니다. mwa serve는 127.0.0.1에서만 열고 SSH 터널로 접속합니다")]
-    NotLoopback(SocketAddr),
     #[error("{0}에서 대기할 수 없습니다: {1}")]
     Bind(SocketAddr, std::io::Error),
     #[error("서버 오류: {0}")]
@@ -163,7 +162,7 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
     app.layer(middleware::from_fn(local_only)).with_state(hub)
 }
 
-/// Binds `addr` (loopback only) and serves until the process ends.
+/// Binds `addr` and serves until the process ends.
 pub async fn serve(host: Arc<dyn Host>, addr: SocketAddr) -> Result<(), ServeError> {
     let listener = bind(addr).await?;
     axum::serve(listener, router(host)).await?;
@@ -181,9 +180,6 @@ pub async fn serve_listener(
 }
 
 pub async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, ServeError> {
-    if !addr.ip().is_loopback() {
-        return Err(ServeError::NotLoopback(addr));
-    }
     tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| ServeError::Bind(addr, e))
@@ -203,6 +199,16 @@ fn is_local_host(host: &str) -> bool {
     )
 }
 
+/// A Host header naming the server by IP address (how people on the internal network reach it).
+/// Domain names stay out: a name could be pointed at this server by another site.
+fn is_ip_host(host: &str) -> bool {
+    let name = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(h, _)| h),
+    };
+    name.parse::<std::net::IpAddr>().is_ok()
+}
+
 /// Allowed browser origins: the page itself on a loopback host, or the Tauri webview.
 fn is_allowed_origin(origin: &str) -> bool {
     if origin == "tauri://localhost" {
@@ -214,16 +220,22 @@ fn is_allowed_origin(origin: &str) -> bool {
     }
 }
 
-/// Blocks DNS-rebinding (foreign Host header) and cross-site requests (foreign Origin).
+/// Blocks DNS-rebinding (a Host that is neither localhost nor an IP address) and cross-site
+/// requests (an Origin other than the page itself).
 async fn local_only(headers: HeaderMap, req: Request, next: Next) -> Response {
-    let host_ok = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .is_none_or(is_local_host);
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
+    let host_ok = host.is_none_or(|h| is_local_host(h) || is_ip_host(h));
     let origin_ok = headers
         .get(header::ORIGIN)
         .and_then(|h| h.to_str().ok())
-        .is_none_or(is_allowed_origin);
+        .is_none_or(|o| {
+            is_allowed_origin(o)
+                || host.is_some_and(|h| {
+                    o.strip_prefix("http://")
+                        .or_else(|| o.strip_prefix("https://"))
+                        == Some(h)
+                })
+        });
     if host_ok && origin_ok {
         next.run(req).await
     } else {
@@ -883,5 +895,9 @@ mod tests {
                 && is_local_host("127.0.0.1")
         );
         assert!(!is_local_host("192.168.0.10:7700") && !is_local_host("evil.com"));
+        assert!(
+            is_ip_host("10.1.2.3:7000") && is_ip_host("[fe80::1]:7000") && is_ip_host("10.1.2.3")
+        );
+        assert!(!is_ip_host("evil.com:7000") && !is_ip_host("10.1.2.3.evil.com"));
     }
 }
