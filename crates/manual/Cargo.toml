@@ -10,6 +10,7 @@ mwa-capture = { version = "0.1.0", path = "../capture" }
 mwa-core = { version = "0.1.0", path = "../core" }
 mwa-productmap = { version = "0.1.0", path = "../productmap" }
 mwa-protocol = { version = "0.1.0", path = "../protocol" }
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 thiserror = "2.0.21"

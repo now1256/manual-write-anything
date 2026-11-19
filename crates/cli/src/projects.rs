@@ -24,19 +24,7 @@ struct Stored {
 
 /// `$MWA_HOME`, else the platform's per-user data folder plus `mwa`.
 pub fn data_dir() -> PathBuf {
-    if let Some(p) = std::env::var_os("MWA_HOME") {
-        return PathBuf::from(p);
-    }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        return home.join("Library/Application Support/mwa");
-    }
-    std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share"))
-        .join("mwa")
+    mwa_capture::shoot::data_dir()
 }
 
 pub struct Registry {

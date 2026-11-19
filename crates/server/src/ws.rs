@@ -90,6 +90,167 @@ fn handle(msg: ClientMsg, host: &Arc<dyn Host>, tx: &mpsc::UnboundedSender<Serve
                         Ok((_, lines)) => ServerMsg::MapBuilt { id, lines },
                         Err(message) => ServerMsg::Error { id, message },
                     },
+                    "shotref" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 장면을 찍을지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.capture_reference(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "기존 매뉴얼 장면 촬영".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "shotdoc" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 그림 자리를 찍을지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.capture_document(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "그림 자리 촬영".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "docmake" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 매뉴얼을 만들지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.make_document(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "매뉴얼 만들기".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "docground" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 근거를 확인할지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.ground_document(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "근거 확인".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "docupdate" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 매뉴얼을 비교할지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.propose_document(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "갱신 제안".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "docref" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기능의 기존 매뉴얼을 옮길지 정해지지 않았습니다".into(),
+                        },
+                        Some(feature) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.import_document(&feature, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "매뉴얼 문서".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
+                    "describe" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 기존 매뉴얼을 설명할지 정해지지 않았습니다".into(),
+                        },
+                        Some(doc) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.describe_reference(&doc, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "장면 설명".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
                     "browser" => {
                         let progress_tx = tx.clone();
                         let progress = Box::new(move |t: &str| {

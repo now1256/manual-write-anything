@@ -89,6 +89,8 @@ pub struct FeatureInput {
     pub code: String,
     /// Property → string values the code compares against.
     pub hints: BTreeMap<String, BTreeSet<String>>,
+    /// Scenes the old manual shows ("화면 — 상태"); the data must make each possible.
+    pub scenes: Vec<String>,
 }
 
 impl FeatureInput {
@@ -227,7 +229,9 @@ fn prompt(input: &FeatureInput, world: &World) -> String {
          ## 만들 응답 (메서드 경로 → 응답 타입). `{{}}`는 경로 인자입니다\n{types}\n\
          ## 코드에서 비교하는 문자열 값 (속성: 값들)\n{hints}\n\n\
          ## 데이터 해석 코드\n{code}\n\n\
+         ## 기존 매뉴얼에 있는 장면 (이 데이터로 다시 찍을 수 있어야 합니다)\n{scenes}\n\n\
          요구사항:\n\
+         - 위 장면이 모두 가능하도록 데이터를 고르세요(예: 활성화 확인 창 → 비활성 항목 1건, 2페이지 목록 → 전체 건수를 늘림, 연결 테스트 성공 → 성공 응답).\n\
          - 위 GET은 모두 응답을 1개 이상 만드세요. 쓰기(POST/PUT/PATCH/DELETE)는 성공 응답 1개씩.\n\
          - 목록은 3~5건, 화면의 배지·필터·상태가 모두 보이도록 상태를 섞으세요.\n\
          - `{{}}`가 있는 상세 경로는 목록에 나온 ID마다(최소 2개) params로 응답을 만드세요.\n\
@@ -243,6 +247,11 @@ fn prompt(input: &FeatureInput, world: &World) -> String {
             hints.join("\n")
         },
         code = input.code,
+        scenes = if input.scenes.is_empty() {
+            "(없음)".into()
+        } else {
+            input.scenes.join("\n")
+        },
     )
 }
 
@@ -488,6 +497,7 @@ mod tests {
             label: "F".into(),
             shapes: shapes(),
             code: String::new(),
+            scenes: Vec::new(),
             hints: [(
                 "status".to_string(),
                 ["done".to_string(), "draft".to_string()].into(),

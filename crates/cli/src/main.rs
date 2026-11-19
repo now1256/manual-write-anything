@@ -8,8 +8,10 @@ use mwa_protocol::{Config, Request, Role};
 use mwa_source::{Snapshot, snapshot_local};
 use serde_json::{Value, json};
 
+mod confluence;
 mod projects;
 mod settings;
+mod setup;
 mod tui_host;
 
 const CONFIG_FILE: &str = "mwa.toml";
@@ -77,8 +79,8 @@ enum Cmd {
     },
     /// 제품 화면을 촬영합니다 (공유 서버에는 쓰기 요청을 보내지 않습니다)
     Shot {
-        /// menus: 메뉴 첫 화면 전체 / detail: 매뉴얼의 "캡처 필요" 화면(대화상자·상세, --only로 기능 지정)
-        #[arg(value_parser = ["menus", "detail"])]
+        /// menus: 메뉴 첫 화면 전체 / detail: 매뉴얼의 "캡처 필요" 화면 / ref: 기존 매뉴얼의 장면 다시 찍기 / doc: 쓴 매뉴얼의 그림 자리 찍기 (detail·ref·doc은 --only로 기능 지정)
+        #[arg(value_parser = ["menus", "detail", "ref", "doc"])]
         what: String,
         /// 같은 화면을 몇 번 찍어 흔들림을 비교할지
         #[arg(long, default_value_t = 2)]
@@ -92,20 +94,32 @@ enum Cmd {
         /// detail: 저장된 촬영 계획을 버리고 새로 계획합니다
         #[arg(long)]
         replan: bool,
+        /// ref: 이 그림(img/...)의 장면만 다시 찍고 나머지 결과는 둡니다. doc: 이 그림 자리(블록 id)만 다시 찍습니다
+        #[arg(long)]
+        scene: Option<String>,
     },
-    /// 기능 하나의 매뉴얼을 만듭니다 (사실 추출 → 작성 → 검증 → 기존 매뉴얼 비교)
+    /// 기능의 코드를 읽습니다: 사실을 뽑고 인용 줄을 검사합니다 (③ 코드 읽기)
     Gen {
         /// 기능 키 (예: user-account). 지도에서 확인
         feature: String,
-        /// 양식을 배울 견본 매뉴얼(Markdown). 없으면 저장된 양식(template/schema.json)을 씁니다
-        #[arg(long)]
-        template: Option<PathBuf>,
-        /// 비교할 기존 매뉴얼(Markdown)
-        #[arg(long)]
-        compare: Option<PathBuf>,
         /// LLM 없이 코드 조각과 화면 라벨만 보여줍니다
         #[arg(long)]
         slice_only: bool,
+    },
+    /// 매뉴얼 양식을 관리합니다
+    Template {
+        #[command(subcommand)]
+        action: TemplateCmd,
+    },
+    /// 편집하는 매뉴얼 문서를 다룹니다
+    Doc {
+        #[command(subcommand)]
+        action: DocCmd,
+    },
+    /// 기존 매뉴얼(PDF·MD)을 가져옵니다
+    Ref {
+        #[command(subcommand)]
+        action: RefCmd,
     },
     /// 제품 코드 소스(로컬 폴더·git)를 관리합니다
     Sources {
@@ -136,6 +150,41 @@ enum Cmd {
         system: String,
         prompt: String,
     },
+}
+
+#[derive(Subcommand)]
+enum TemplateCmd {
+    /// 견본 매뉴얼(PDF·Markdown)에서 양식만 배워 template/schema.json에 저장합니다 (writer 1회 호출)
+    Learn { example: PathBuf },
+}
+
+#[derive(Subcommand)]
+enum DocCmd {
+    /// 기능의 기존 매뉴얼 글을 그대로 문서로 옮깁니다 (예비 방식, PDF는 쪽마다 worker 1번)
+    Import { feature: String },
+    /// 문서를 코드 사실과 비교해 갱신 제안을 만듭니다 (writer 1번, 코드 읽기 결과 사용)
+    Update { feature: String },
+    /// 코드로 매뉴얼을 새로 씁니다. 기존 매뉴얼은 양식·구조의 본보기 (③ 매뉴얼 만들기와 같음).
+    /// 기존 매뉴얼이 없으면(또는 --fresh) 다른 매뉴얼을 본보기로 쓰고 그림 자리를 바로 찍습니다
+    Write {
+        feature: String,
+        /// 짝지은 기존 매뉴얼을 쓰지 않고 처음부터 새로 씁니다
+        #[arg(long)]
+        fresh: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RefCmd {
+    /// 기존 매뉴얼(PDF·MD, 폴더면 안의 파일 모두)을 가져와 그림·제목을 뽑고 기능과 짝짓습니다 (reference/)
+    Import {
+        #[arg(required = true)]
+        pdfs: Vec<PathBuf>,
+    },
+    /// 가져온 기존 매뉴얼과 짝지은 기능을 봅니다
+    List,
+    /// 기존 매뉴얼 캡처마다 장면 설명을 만듭니다 (worker 모델, 이미지)
+    Describe { id: String },
 }
 
 #[derive(Subcommand)]
@@ -214,6 +263,91 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
             no_openapi,
         } => map(cli_workspace, openapi, no_openapi).await,
         Cmd::Auth { action } => auth(cli_workspace, action).await,
+        Cmd::Ref { action } => reference_cmd(cli_workspace, action),
+        Cmd::Doc {
+            action: DocCmd::Import { feature },
+        } => {
+            let cfg = load_config(cli_workspace)?;
+            let d = open_dispatcher(cli_workspace, cfg)?;
+            let doc =
+                mwa_manual::document::import(&d, cli_workspace, &feature, &|l| println!("{l}"))
+                    .await?;
+            println!(
+                "{}: 문서로 옮김 ({}자) · 사용량 정가 환산 ${:.3}",
+                doc.title,
+                doc.html.chars().count(),
+                d.spent_usd()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Doc {
+            action: DocCmd::Write { feature, fresh },
+        } => {
+            use mwa_host::Host;
+            let host = tui_host::CliHost::open(cli_workspace)?;
+            let target = if fresh {
+                format!("{feature}?fresh")
+            } else {
+                feature
+            };
+            for l in host
+                .make_document(&target, Box::new(|l: &str| println!("{l}")))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?
+            {
+                println!("{l}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Doc {
+            action: DocCmd::Update { feature },
+        } => {
+            let cfg = load_config(cli_workspace)?;
+            let run = mwa_manual::pipeline::load_run(cli_workspace, &feature)
+                .context("코드에서 뽑은 사실이 없습니다. 먼저 mwa gen")?;
+            let d = open_dispatcher(cli_workspace, cfg)?;
+            let p = mwa_manual::document::propose(&d, cli_workspace, &feature, &run.facts).await?;
+            for x in &p.items {
+                println!("[{} {}] {}\n  {}", x.action, x.block, x.reason, x.html);
+            }
+            println!(
+                "갱신 제안 {}개 · 사용량 정가 환산 ${:.3}",
+                p.items.len(),
+                d.spent_usd()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Template {
+            action: TemplateCmd::Learn { example },
+        } => {
+            let cfg = load_config(cli_workspace)?;
+            let ex = mwa_manual::reference::load_example(cli_workspace, &example)?;
+            println!(
+                "견본: {} (본문 {}자, 페이지 이미지 {}장)",
+                ex.name,
+                ex.text.chars().count(),
+                ex.pages.len()
+            );
+            let d = open_dispatcher(cli_workspace, cfg)?;
+            let t = mwa_manual::template::learn(&d, &ex.text, &ex.name, &ex.pages).await?;
+            let path = cli_workspace.join(mwa_manual::pipeline::TEMPLATE_FILE);
+            std::fs::create_dir_all(path.parent().expect("has parent"))?;
+            std::fs::write(&path, serde_json::to_string_pretty(&t)?)?;
+            println!("절 {}개:", t.sections.len());
+            for s in &t.sections {
+                println!("  - {} ({})", s.title, s.typical_blocks.join(", "));
+            }
+            println!("문체 규칙 {}개:", t.style_rules.len());
+            for r in &t.style_rules {
+                println!("  · {r}");
+            }
+            println!(
+                "저장: {}  (사용량 정가 환산 ${:.3})",
+                path.display(),
+                d.spent_usd()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Sources {
             action: SourcesCmd::Sync,
         } => {
@@ -240,41 +374,16 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
         } => world_check(cli_workspace, &features),
         Cmd::Gen {
             feature,
-            template,
-            compare,
             slice_only,
         } => {
             let cfg = load_config(cli_workspace)?;
-            let read = |p: Option<PathBuf>| -> Result<Option<(String, String)>> {
-                p.map(|p| {
-                    let text = std::fs::read_to_string(&p)
-                        .with_context(|| format!("{} 을 읽을 수 없습니다", p.display()))?;
-                    Ok((
-                        p.file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default(),
-                        text,
-                    ))
-                })
-                .transpose()
-            };
-            // Without --compare, use the existing manual configured in [manual.compare].
-            let compare = compare.or_else(|| cfg.manual.compare.get(&feature).map(PathBuf::from));
-            let (template, compare) = (read(template)?, read(compare)?);
             if slice_only {
                 return gen_slice_only(cli_workspace, &cfg, &feature);
             }
-            let run = generate_manual(cli_workspace, &cfg, &feature, template, compare, |l| {
-                println!("{l}")
-            })
-            .await?;
+            let run = generate_manual(cli_workspace, &cfg, &feature, |l| println!("{l}")).await?;
             for l in mwa_manual::pipeline::summary(&run) {
                 println!("{l}");
             }
-            println!(
-                "저장: {}",
-                cli_workspace.join(format!("manual/{feature}.md")).display()
-            );
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Shot {
@@ -283,8 +392,53 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
             only,
             world,
             replan,
+            scene,
         } => {
             let cfg = load_config(cli_workspace)?;
+            if what == "doc" {
+                anyhow::ensure!(only.len() == 1, "doc은 --only <기능 키> 하나가 필요합니다");
+                let lines = capture_doc(cli_workspace, &cfg, &only[0], scene.as_deref(), |l| {
+                    println!("{l}")
+                })
+                .await?;
+                for l in lines {
+                    println!("{l}");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            if what == "ref" {
+                anyhow::ensure!(only.len() == 1, "ref는 --only <기능 키> 하나가 필요합니다");
+                let shots = capture_reference(
+                    cli_workspace,
+                    &cfg,
+                    &only[0],
+                    world,
+                    scene.as_deref(),
+                    |l| println!("{l}"),
+                )
+                .await?;
+                for s in &shots.scenes {
+                    let mark = match s.status.as_str() {
+                        "reproduced" => "✓",
+                        "different" => "△",
+                        _ => "✗",
+                    };
+                    let why = match s.status.as_str() {
+                        "failed" => format!(
+                            " — {}: {}",
+                            mwa_manual::reference::reason_label(
+                                s.reason_kind.as_deref().unwrap_or("error")
+                            ),
+                            s.reason.as_deref().unwrap_or("")
+                        ),
+                        "different" => format!(" — {}", s.differences.join(" / ")),
+                        _ => String::new(),
+                    };
+                    println!("  {mark} p.{} {}{why}", s.page, s.what);
+                }
+                println!("{}", mwa_manual::reference::summarize(&shots));
+                return Ok(ExitCode::SUCCESS);
+            }
             if what == "detail" {
                 anyhow::ensure!(!only.is_empty(), "detail은 --only <기능 키>가 필요합니다");
                 let ok = capture_detail(cli_workspace, &cfg, &only, world, replan, runs, |l| {
@@ -329,6 +483,13 @@ async fn serve(
     addr: std::net::SocketAddr,
     web_dir: Option<PathBuf>,
 ) -> Result<ExitCode> {
+    // A new folder becomes a project, as in the desktop app.
+    if !ws.join(CONFIG_FILE).exists() {
+        std::fs::create_dir_all(ws)?;
+        std::fs::write(ws.join(CONFIG_FILE), TEMPLATE)?;
+        std::fs::write(ws.join(".gitignore"), format!("{STATE_DIR}/\n"))?;
+        println!("새 프로젝트를 만들었습니다: {}", ws.display());
+    }
     let host = std::sync::Arc::new(tui_host::CliHost::open(ws)?);
     let registry = projects::Registry::new(&projects::data_dir());
     let ws_abs = std::fs::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
@@ -395,6 +556,17 @@ fn open_dispatcher(ws: &Path, cfg: Config) -> Result<Dispatcher> {
     Ok(d)
 }
 
+/// The configured sample manual, used only until the project has learned a format.
+fn first_template(ws: &Path, cfg: &Config) -> Option<PathBuf> {
+    if ws.join(mwa_manual::pipeline::TEMPLATE_FILE).is_file() {
+        return None;
+    }
+    cfg.manual.template.as_deref().map(|p| {
+        let p = PathBuf::from(p);
+        if p.is_relative() { ws.join(p) } else { p }
+    })
+}
+
 /// Node, Playwright, Chromium, memory and the adapter file: what screenshots need.
 fn capture_env_lines(ws: &Path, cfg: &Config) -> (Vec<String>, bool) {
     let mut out = vec!["촬영 환경".to_string()];
@@ -457,6 +629,13 @@ fn capture_env_lines(ws: &Path, cfg: &Config) -> (Vec<String>, bool) {
             }
         }
     }
+    match which("pdftohtml") {
+        Some(_) => out.push("  PDF 도구       OK    poppler (기존 매뉴얼·견본 PDF 읽기)".into()),
+        None => out.push(
+            "  PDF 도구       없음  PDF 견본을 쓰려면 poppler 설치 (apt install poppler-utils / brew install poppler)"
+                .into(),
+        ),
+    }
     if let Some(mb) = mwa_capture::mem::available_mb() {
         let need = cfg.capture.as_ref().map_or(2500, |c| c.min_start_mb);
         let mark = if mb >= need { "OK  " } else { "부족" };
@@ -489,6 +668,33 @@ fn install_browser(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String
         .map(|c| Path::new(&c.node).with_file_name("npx"))
         .filter(|p| p.is_file())
         .unwrap_or_else(|| PathBuf::from("npx"));
+    // An installed mwa unpacks its capture script into the data folder: its Playwright package
+    // comes first.
+    if !dir.join("node_modules/playwright").is_dir() {
+        progress(format!(
+            "촬영기 준비 중 (Playwright 받기)… ({})",
+            dir.display()
+        ));
+        let npm = npx.with_file_name("npm");
+        let npm = if npm.is_file() {
+            npm
+        } else {
+            PathBuf::from("npm")
+        };
+        let out = std::process::Command::new(npm)
+            .args(["install", "--omit=dev", "--no-audit", "--no-fund"])
+            .current_dir(dir)
+            .output()
+            .context("npm을 실행할 수 없습니다 (Node.js 설치 필요)")?;
+        anyhow::ensure!(
+            out.status.success(),
+            "Playwright를 받지 못했습니다: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("")
+        );
+    }
     progress(format!(
         "촬영용 브라우저(Chromium) 설치 중… ({})",
         dir.display()
@@ -515,6 +721,90 @@ fn install_browser(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String
         tail(&out.stderr).join(" / ")
     );
     Ok(vec!["촬영용 브라우저를 설치했습니다".into()])
+}
+
+/// (key, label, group) of the current map's features, if a map exists.
+fn map_features(ws: &Path) -> Vec<(String, String, Option<String>)> {
+    std::fs::read_to_string(ws.join("map/product-map.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<mwa_productmap::map::ProductMap>(&t).ok())
+        .map(|m| {
+            m.features
+                .into_iter()
+                .map(|f| (f.key, f.label, f.group))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn reference_cmd(ws: &Path, action: RefCmd) -> Result<ExitCode> {
+    use mwa_manual::reference;
+    let owned = map_features(ws);
+    let features: Vec<reference::FeatureRef> = owned
+        .iter()
+        .map(|(k, l, g)| (k.as_str(), l.as_str(), g.as_deref()))
+        .collect();
+    match action {
+        RefCmd::Import { pdfs } => {
+            if features.is_empty() {
+                println!(
+                    "제품 지도가 없어 기능 짝짓기는 건너뜁니다 (mwa map 뒤에 mwa ref list로 다시 짝짓습니다)"
+                );
+            }
+            for pdf in pdfs {
+                let d = reference::import(ws, &pdf, &features)?;
+                println!(
+                    "{}{}: {}쪽, 캡처 {}장 → {}",
+                    d.title,
+                    d.tag
+                        .as_deref()
+                        .map(|t| format!(" ({t})"))
+                        .unwrap_or_default(),
+                    d.pages,
+                    d.images.len(),
+                    d.feature.as_deref().unwrap_or("기능 미지정")
+                );
+            }
+        }
+        RefCmd::Describe { id } => {
+            let cfg = load_config(ws)?;
+            let d = open_dispatcher(ws, cfg)?;
+            let rt = tokio::runtime::Handle::current();
+            let doc = tokio::task::block_in_place(|| {
+                rt.block_on(reference::describe(&d, ws, &id, &|l| println!("{l}")))
+            })?;
+            let capture = doc
+                .images
+                .iter()
+                .filter(|i| i.scene.as_ref().is_some_and(|s| s.capture))
+                .count();
+            println!(
+                "{}: 그림 {}장 설명 · 찍을 장면 {}장 · 사용량 정가 환산 ${:.3}",
+                doc.title,
+                doc.images.len(),
+                capture,
+                d.spent_usd()
+            );
+        }
+        RefCmd::List => {
+            for mut d in reference::list(ws) {
+                if d.feature.is_none()
+                    && let Some(k) = reference::match_feature(&d.title, d.tag.as_deref(), &features)
+                {
+                    d.feature = Some(k);
+                    reference::save(ws, &d)?;
+                }
+                println!(
+                    "{:<24} {:>3}쪽 캡처 {:>3}장  {}",
+                    d.id,
+                    d.pages,
+                    d.images.len(),
+                    d.feature.as_deref().unwrap_or("기능 미지정")
+                );
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Clones or updates every `[[source]]` that has `git`; one result line per source.
@@ -1184,7 +1474,7 @@ async fn capture_detail(
 ) -> Result<bool> {
     use mwa_capture::detail::{self, Plan, Sidecar};
     use mwa_capture::shoot::{Cookie, default_script};
-    use mwa_manual::shotplan::{self, Context};
+    use mwa_manual::shotplan;
 
     let cap = cfg
         .capture
@@ -1261,50 +1551,9 @@ async fn capture_detail(
     let result: Result<()> = async {
         for wk in &work {
             let f = wk.feature;
-            let routes: Vec<String> = f.screens.iter().map(|s| s.route.clone()).collect();
-            // Planner context: real accessibility trees of the static start pages.
             let needs_ctx = !wk.todo.is_empty() || !wk.reuse.is_empty();
             let ctx_for_plan = if needs_ctx {
-                let starts: Vec<String> = routes
-                    .iter()
-                    .filter(|r| !r.contains('{'))
-                    .cloned()
-                    .collect();
-                let tmp = ws.join(format!(".mwa/shots/probe-{}", job.fixed_time));
-                let evs = detail::probe(sc, &job, &tmp, &starts).await?;
-                let _ = std::fs::remove_dir_all(&tmp);
-                let snapshots = evs
-                    .into_iter()
-                    .filter_map(|e| Some((e.id, e.aria?)))
-                    .collect();
-                let slice = mwa_manual::pipeline::build_slice(
-                    &ctx.map,
-                    f,
-                    &gen_options(ws, &ctx, &f.key, None, None),
-                )?;
-                let mut labels: Vec<String> = mwa_manual::labels::extract(&slice)
-                    .into_iter()
-                    .map(|l| l.text)
-                    .collect();
-                labels.sort();
-                labels.dedup();
-                labels.truncate(500);
-                let data: Vec<String> = w
-                    .responses
-                    .iter()
-                    .filter(|r| r.feature == f.key && r.method == "GET")
-                    .map(|r| {
-                        let body: String = r.body.to_string().chars().take(1200).collect();
-                        format!("{} {:?}: {body}", r.path, r.params)
-                    })
-                    .collect();
-                Some(Context {
-                    feature_label: &f.label,
-                    routes: routes.clone(),
-                    snapshots,
-                    data: data.join("\n"),
-                    labels,
-                })
+                Some(planner_context(ws, &ctx, &w, f, sc, &job).await?)
             } else {
                 None
             };
@@ -1320,8 +1569,16 @@ async fn capture_detail(
             if plans.is_empty() {
                 continue;
             }
-            let mut records =
-                detail::shoot(sc, &job, ws, &f.key, &plans, runs, &mut progress).await?;
+            let mut records = detail::shoot(
+                sc,
+                &job,
+                ws,
+                &format!("detail/{}", f.key),
+                &plans,
+                runs,
+                &mut progress,
+            )
+            .await?;
             for round in 1..=2 {
                 let failed: Vec<usize> = (0..records.len()).filter(|&i| !records[i].ok).collect();
                 let (false, Some(c)) = (failed.is_empty(), &ctx_for_plan) else {
@@ -1338,8 +1595,16 @@ async fn capture_detail(
                     let err = r.error.clone().unwrap_or_default();
                     fixed.push(shotplan::repair(&d, c, &r.plan, &err, r.aria.as_deref()).await?);
                 }
-                let again =
-                    detail::shoot(sc, &job, ws, &f.key, &fixed, runs, &mut progress).await?;
+                let again = detail::shoot(
+                    sc,
+                    &job,
+                    ws,
+                    &format!("detail/{}", f.key),
+                    &fixed,
+                    runs,
+                    &mut progress,
+                )
+                .await?;
                 for (i, r) in failed.into_iter().zip(again) {
                     records[i] = r;
                 }
@@ -1389,6 +1654,551 @@ async fn capture_detail(
         progress(format!("로그아웃 실패: {e} (세션은 30분 뒤 만료)"));
     }
     result.map(|_| all_ok)
+}
+
+/// Reproduces the old manual's scenes for one feature (D-031 ④) and judges every picture
+/// against the old one. A scene counts as reproduced only when the judge says so; anything
+/// the planner declares impossible, any failed step and any wrong screen is reported as such.
+async fn capture_reference(
+    ws: &Path,
+    cfg: &Config,
+    feature: &str,
+    world: bool,
+    only: Option<&str>,
+    progress: impl Fn(String) + Send + Sync,
+) -> Result<mwa_manual::reference::SceneShots> {
+    use mwa_capture::detail::Sidecar;
+    use mwa_capture::shoot::{Cookie, default_script};
+    use mwa_manual::reference::{self, SceneShot, SceneShots};
+    use mwa_manual::shotplan::{self, SceneTodo};
+
+    let doc = reference::for_feature(ws, feature).with_context(|| {
+        format!("{feature}에 짝지은 기존 매뉴얼이 없습니다 (설정 → 기존 매뉴얼)")
+    })?;
+    anyhow::ensure!(
+        doc.images.iter().all(|i| i.scene.is_some()),
+        "장면 설명을 먼저 만드세요 (기존 매뉴얼 탭 → 장면 설명 만들기)"
+    );
+    let ref_dir = reference::doc_dir(ws, &doc.id);
+    let targets: Vec<(usize, &reference::RefImage)> = doc
+        .images
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.shootable())
+        .filter(|(_, i)| only.is_none_or(|o| o == i.file))
+        .collect();
+    anyhow::ensure!(
+        !targets.is_empty(),
+        "{}",
+        match only {
+            Some(o) => format!("찍을 장면이 아닌 그림입니다: {o}"),
+            None => "기존 매뉴얼에 찍을 장면이 없습니다".into(),
+        }
+    );
+    let id_of = |n: usize, img: &reference::RefImage| format!("p{}-{}", img.page, n + 1);
+
+    let cap = cfg
+        .capture
+        .as_ref()
+        .context("mwa.toml에 [capture] 설정이 없습니다")?;
+    let profile = cfg.profiles.get(&cap.profile).expect("validated by config");
+    let spec = load_ui_spec(ws, cfg)?;
+    if let Some(mb) = mwa_capture::mem::available_mb()
+        && mb < cap.min_start_mb
+    {
+        anyhow::bail!(
+            "가용 메모리 {mb}MB가 기준 {}MB보다 적어 촬영을 시작하지 않습니다",
+            cap.min_start_mb
+        );
+    }
+    let ctx = product_ctx(ws, cfg)?;
+    let f = ctx
+        .map
+        .features
+        .iter()
+        .find(|f| f.key == feature)
+        .with_context(|| format!("지도에 없는 기능 키입니다: {feature}"))?;
+    let d = open_dispatcher(ws, cfg.clone())?;
+
+    // Demo data shaped by the scenes (made once per feature).
+    let mut w = mwa_manual::world::load(ws)?;
+    if world && !w.features.contains_key(feature) {
+        progress(format!(
+            "{feature}: 데모 데이터 작성 중 (기존 매뉴얼 장면 {}개 반영)",
+            targets.len()
+        ));
+        let mut project =
+            mwa_productmap::graph::Project::new(&ctx.frontend, ctx.adapter.alias_prefix);
+        let (input, fp) = world_input(ws, &ctx, &mut project, feature)?;
+        let rep = mwa_manual::world::generate(&d, &mut w, &input, &fp, &|l| progress(l)).await?;
+        mwa_manual::world::save(ws, &w)?;
+        progress(format!(
+            "{feature}: 데모 응답 {}개, 검사 위반 {}건",
+            rep.responses,
+            rep.errors.len()
+        ));
+    }
+    let mocks = if world {
+        world_mocks(ws, cfg)?
+    } else {
+        Vec::new()
+    };
+    let script = default_script();
+    let sc = Sidecar {
+        node: &cap.node,
+        script: &script,
+    };
+
+    progress(format!("{} 로그인 1회 시도…", profile.user_id));
+    let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
+    let job = capture_job(cap, &spec, profile, cookie, mocks)?;
+    let dir = format!("reference/{feature}");
+    let result: Result<SceneShots> = async {
+        let pctx = planner_context(ws, &ctx, &w, f, sc, &job).await?;
+        let todos: Vec<SceneTodo> = targets
+            .iter()
+            .map(|(n, img)| {
+                let s = img.scene.as_ref().expect("filtered");
+                SceneTodo {
+                    id: id_of(*n, img),
+                    what: format!("{} — {}", s.screen, s.state),
+                    how: s.how.clone(),
+                    image: Some(ref_dir.join(&img.file)),
+                }
+            })
+            .collect();
+        // Same proportions as the old picture.
+        let ratio_of = |id: &str| {
+            targets
+                .iter()
+                .find(|(n, img)| id_of(*n, img) == id)
+                .filter(|(_, img)| img.height > 0)
+                .map(|(_, img)| f64::from(img.width) / f64::from(img.height))
+        };
+        let ScenesShot {
+            records,
+            infeasible,
+            mut tries,
+        } = shoot_scenes(
+            &d, &pctx, sc, &job, ws, &dir, &todos, &ratio_of, feature, &progress,
+        )
+        .await?;
+
+        let mut scenes = Vec::new();
+        for (n, img) in &targets {
+            let id = id_of(*n, img);
+            let s = img.scene.as_ref().expect("filtered");
+            let what = format!("{} — {}", s.screen, s.state);
+            let mut shot = SceneShot {
+                image: img.file.clone(),
+                page: img.page,
+                heading: img.heading.clone(),
+                what: what.clone(),
+                status: "failed".into(),
+                reason_kind: None,
+                reason: None,
+                differences: Vec::new(),
+                changes: Vec::new(),
+                file: None,
+                data: None,
+                plan: None,
+                attempts: tries.remove(&id).unwrap_or_default(),
+                blocked: Vec::new(),
+                mocked: Vec::new(),
+                uploaded: None,
+                choice: None,
+            };
+            if let Some(why) = infeasible.get(&id) {
+                shot.reason_kind = Some(why.kind.clone());
+                shot.reason = Some(why.reason.clone());
+                scenes.push(shot);
+                continue;
+            }
+            let Some(r) = records.iter().find(|r| r.plan.todo == id) else {
+                shot.reason_kind = Some("error".into());
+                shot.reason = Some("계획이 만들어지지 않았습니다".into());
+                scenes.push(shot);
+                continue;
+            };
+            shot.plan = Some(r.plan.clone());
+            shot.data = r.data.clone();
+            shot.mocked = r.mocked.clone();
+            shot.blocked = r
+                .blocked
+                .iter()
+                .map(|b| format!("{} {}", b.method, b.url))
+                .collect();
+            if !r.ok {
+                let err = r.error.clone().unwrap_or_default();
+                shot.reason_kind = Some(
+                    if err.contains("일치 0개") || err.contains("Timeout") {
+                        "not_found"
+                    } else {
+                        "error"
+                    }
+                    .into(),
+                );
+                shot.reason = Some(err);
+                scenes.push(shot);
+                continue;
+            }
+            if !r.blocked.is_empty() {
+                shot.reason_kind = Some("needs_write".into());
+                shot.reason = Some(format!(
+                    "데모 응답이 없는 쓰기 요청을 막았습니다: {}",
+                    r.blocked
+                        .iter()
+                        .map(|b| format!("{} {}", b.method, b.url))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            shot.file = r.file.clone();
+            if r.region_missed {
+                shot.differences.push(format!(
+                    "기존 그림과 같은 영역({})을 찾지 못해 잘라내지 않고 찍었습니다",
+                    r.plan.region.join(", ")
+                ));
+            }
+            let new_path = ws.join(r.file.as_deref().unwrap_or_default());
+            progress(format!("{feature}: 대조 {id}"));
+            match shotplan::judge(&d, &ref_dir.join(&img.file), &new_path, &what).await {
+                Ok(v) => {
+                    shot.differences.extend(v.differences);
+                    shot.changes = v.changes;
+                    shot.status = match v.verdict.as_str() {
+                        "same" if shot.reason_kind.is_none() => "reproduced",
+                        "same" | "different" => "different",
+                        _ => {
+                            shot.reason_kind
+                                .get_or_insert_with(|| "wrong_screen".into());
+                            "failed"
+                        }
+                    }
+                    .into();
+                }
+                Err(e) => {
+                    shot.reason_kind = Some("error".into());
+                    shot.reason = Some(format!("대조 실패: {e}"));
+                }
+            }
+            scenes.push(shot);
+        }
+        let shots = reference::merge_scene_shots(
+            ws,
+            SceneShots {
+                feature: feature.to_string(),
+                doc: doc.id.clone(),
+                taken_at: job.fixed_time / 1000,
+                scenes,
+            },
+        );
+        reference::save_scene_shots(ws, &shots)?;
+        progress(format!(
+            "{feature}: {} · 사용량 정가 환산 ${:.3}",
+            reference::summarize(&shots),
+            d.spent_usd()
+        ));
+        Ok(shots)
+    }
+    .await;
+    if let Err(e) = mwa_capture::login::logout(&spec.auth, &profile.base_url, &pair).await {
+        progress(format!("로그아웃 실패: {e} (세션은 30분 뒤 만료)"));
+    }
+    result
+}
+
+/// Shoots the picture slots of a written manual (D-046): every slot without a picture, or the
+/// ones named by `only` (block ids, comma-separated). The pictures (or why a slot could not be shot) go into the document.
+async fn capture_doc(
+    ws: &Path,
+    cfg: &Config,
+    feature: &str,
+    only: Option<&str>,
+    progress: impl Fn(String) + Send + Sync,
+) -> Result<Vec<String>> {
+    use mwa_capture::detail::Sidecar;
+    use mwa_capture::shoot::{Cookie, default_script};
+    use mwa_manual::{document, reference, shotplan::SceneTodo};
+
+    let doc = document::load(ws, feature)
+        .with_context(|| format!("{feature}의 매뉴얼 문서가 없습니다 (③에서 먼저 쓰세요)"))?;
+    let slots: Vec<document::Slot> = document::picture_slots(&doc.html)
+        .into_iter()
+        .filter(|s| only.map_or(s.shot.is_none(), |o| o.split(',').any(|b| b == s.bid)))
+        .collect();
+    anyhow::ensure!(!slots.is_empty(), "찍을 그림 자리가 없습니다");
+
+    let cap = cfg
+        .capture
+        .as_ref()
+        .context("mwa.toml에 [capture] 설정이 없습니다")?;
+    let profile = cfg.profiles.get(&cap.profile).expect("validated by config");
+    let spec = load_ui_spec(ws, cfg)?;
+    if let Some(mb) = mwa_capture::mem::available_mb()
+        && mb < cap.min_start_mb
+    {
+        anyhow::bail!(
+            "가용 메모리 {mb}MB가 기준 {}MB보다 적어 촬영을 시작하지 않습니다",
+            cap.min_start_mb
+        );
+    }
+    let ctx = product_ctx(ws, cfg)?;
+    let f = ctx
+        .map
+        .features
+        .iter()
+        .find(|f| f.key == feature)
+        .with_context(|| format!("지도에 없는 기능 키입니다: {feature}"))?;
+    let d = open_dispatcher(ws, cfg.clone())?;
+    // Demo data is used when the feature has some (made from ② for the old manual's scenes).
+    let w = mwa_manual::world::load(ws)?;
+    let mocks = if w.features.contains_key(feature) {
+        world_mocks(ws, cfg)?
+    } else {
+        Vec::new()
+    };
+    let script = default_script();
+    let sc = Sidecar {
+        node: &cap.node,
+        script: &script,
+    };
+
+    progress(format!("{} 로그인 1회 시도…", profile.user_id));
+    let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
+    let job = capture_job(cap, &spec, profile, cookie, mocks)?;
+    let dir = format!("doc/{feature}");
+    let result: Result<Vec<String>> = async {
+        let pctx = planner_context(ws, &ctx, &w, f, sc, &job).await?;
+        let todos: Vec<SceneTodo> = slots
+            .iter()
+            .map(|s| SceneTodo {
+                id: s.bid.clone(),
+                what: s.want.clone(),
+                how: String::new(),
+                image: None,
+            })
+            .collect();
+        let shot = shoot_scenes(
+            &d,
+            &pctx,
+            sc,
+            &job,
+            ws,
+            &dir,
+            &todos,
+            &|_| None,
+            feature,
+            &progress,
+        )
+        .await?;
+        let results: Vec<(String, std::result::Result<String, String>)> = slots
+            .iter()
+            .map(|s| {
+                let r = if let Some(why) = shot.infeasible.get(&s.bid) {
+                    Err(format!(
+                        "{}: {}",
+                        reference::reason_label(&why.kind),
+                        why.reason
+                    ))
+                } else {
+                    match shot.records.iter().find(|r| r.plan.todo == s.bid) {
+                        Some(r) if r.ok => {
+                            if let Some(file) = &r.file {
+                                // A drawer is often taller than what it shows.
+                                let _ = mwa_capture::diff::trim_bottom(&ws.join(file), 32);
+                            }
+                            r.file.clone().ok_or_else(|| "그림 파일이 없습니다".into())
+                        }
+                        Some(r) => Err(r.error.clone().unwrap_or_else(|| "찍지 못했습니다".into())),
+                        None => Err("촬영 계획이 만들어지지 않았습니다".into()),
+                    }
+                };
+                (s.bid.clone(), r)
+            })
+            .collect();
+        let doc = document::fill_slots(ws, feature, &results)?;
+        let ok = results.iter().filter(|(_, r)| r.is_ok()).count();
+        let mut lines = vec![format!(
+            "{}: 그림 자리 {}개 중 {ok}개 찍음 · 문서 버전 {} · 사용량 정가 환산 ${:.3}",
+            doc.title,
+            results.len(),
+            doc.version,
+            d.spent_usd()
+        )];
+        for (s, (_, r)) in slots.iter().zip(&results) {
+            if let Err(why) = r {
+                lines.push(format!("✗ {} — {why}", s.want));
+            }
+        }
+        Ok(lines)
+    }
+    .await;
+    if let Err(e) = mwa_capture::login::logout(&spec.auth, &profile.base_url, &pair).await {
+        progress(format!("로그아웃 실패: {e} (세션은 30분 뒤 만료)"));
+    }
+    result
+}
+
+/// Scenes planned and shot: the records, scenes that cannot be reached here (with why), and
+/// every try per scene.
+struct ScenesShot {
+    records: Vec<mwa_capture::detail::DetailRecord>,
+    infeasible: std::collections::HashMap<String, mwa_manual::shotplan::Infeasible>,
+    tries: std::collections::HashMap<String, Vec<mwa_manual::reference::Attempt>>,
+}
+
+/// Plans the scenes (8 per model call), shoots them, and fixes the plans of failed ones twice.
+#[allow(clippy::too_many_arguments)]
+async fn shoot_scenes(
+    d: &Dispatcher,
+    pctx: &mwa_manual::shotplan::Context<'_>,
+    sc: mwa_capture::detail::Sidecar<'_>,
+    job: &mwa_capture::shoot::Job,
+    ws: &Path,
+    dir: &str,
+    todos: &[mwa_manual::shotplan::SceneTodo],
+    ratio_of: &(dyn Fn(&str) -> Option<f64> + Sync),
+    feature: &str,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> Result<ScenesShot> {
+    use mwa_capture::detail;
+    use mwa_manual::{reference, shotplan};
+    let mut planned = Vec::new();
+    for (b, chunk) in todos.chunks(8).enumerate() {
+        progress(format!(
+            "{feature}: 장면 촬영 계획 {}/{}",
+            b + 1,
+            todos.len().div_ceil(8)
+        ));
+        planned.extend(shotplan::plan_scenes(d, pctx, chunk).await?);
+    }
+    let mut infeasible = std::collections::HashMap::new();
+    let mut plans = Vec::new();
+    for (mut p, why) in planned {
+        p.ratio = ratio_of(&p.todo);
+        match why {
+            Some(w) => {
+                infeasible.insert(p.todo.clone(), w);
+            }
+            None => plans.push(p),
+        }
+    }
+    // Every try per scene, shown to the user as "어디서 안 됐나".
+    let mut tries: std::collections::HashMap<String, Vec<reference::Attempt>> =
+        std::collections::HashMap::new();
+    let mut records = if plans.is_empty() {
+        Vec::new()
+    } else {
+        detail::shoot(sc, job, ws, dir, &plans, 2, progress).await?
+    };
+    for round in 1..=2 {
+        let failed: Vec<usize> = (0..records.len()).filter(|&i| !records[i].ok).collect();
+        if failed.is_empty() {
+            break;
+        }
+        progress(format!(
+            "{feature}: 실패 {}개 계획 수정 ({round}/2)",
+            failed.len()
+        ));
+        let mut fixed = Vec::new();
+        for &i in &failed {
+            let r = &records[i];
+            let err = r.error.clone().unwrap_or_default();
+            fixed.push(shotplan::repair(d, pctx, &r.plan, &err, r.aria.as_deref()).await?);
+        }
+        let again = detail::shoot(sc, job, ws, dir, &fixed, 2, progress).await?;
+        for (i, r) in failed.into_iter().zip(again) {
+            tries
+                .entry(records[i].plan.todo.clone())
+                .or_default()
+                .push(reference::attempt_of(&records[i]));
+            records[i] = r;
+        }
+    }
+    for r in &records {
+        tries
+            .entry(r.plan.todo.clone())
+            .or_default()
+            .push(reference::attempt_of(r));
+    }
+
+    Ok(ScenesShot {
+        records,
+        infeasible,
+        tries,
+    })
+}
+
+/// What the shot planner sees: real accessibility trees of the feature's static pages, the
+/// demo data's ids, the code's labels and which writes are answered by demo data.
+async fn planner_context<'a>(
+    ws: &Path,
+    ctx: &ProductCtx,
+    w: &mwa_manual::world::World,
+    f: &'a mwa_productmap::map::Feature,
+    sc: mwa_capture::detail::Sidecar<'_>,
+    job: &mwa_capture::shoot::Job,
+) -> Result<mwa_manual::shotplan::Context<'a>> {
+    let routes: Vec<String> = f.screens.iter().map(|s| s.route.clone()).collect();
+    let starts: Vec<String> = routes
+        .iter()
+        .filter(|r| !r.contains('{'))
+        .cloned()
+        .collect();
+    let tmp = ws.join(format!(".mwa/shots/probe-{}", job.fixed_time));
+    let evs = mwa_capture::detail::probe(sc, job, &tmp, &starts).await?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    let evs_data: Vec<mwa_capture::shoot::ApiSample> =
+        evs.iter().flat_map(|e| e.api_data.clone()).collect();
+    let snapshots = evs
+        .into_iter()
+        .filter_map(|e| Some((e.id, e.aria?)))
+        .collect();
+    let slice =
+        mwa_manual::pipeline::build_slice(&ctx.map, f, &gen_options(ws, ctx, &f.key, None, None))?;
+    let mut labels: Vec<String> = mwa_manual::labels::extract(&slice)
+        .into_iter()
+        .map(|l| l.text)
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels.truncate(500);
+    // With demo data the planner sees the demo records; otherwise what the real server
+    // returned while probing (never mix the two: names would not exist on screen).
+    let data: Vec<String> = if job.mocks.is_empty() {
+        let mut seen = std::collections::BTreeSet::new();
+        evs_data
+            .into_iter()
+            .filter(|a| seen.insert(a.path.clone()))
+            .map(|a| format!("(실제 서버) GET {}: {}", a.path, a.body))
+            .collect()
+    } else {
+        w.responses
+            .iter()
+            .filter(|r| r.feature == f.key && r.method == "GET")
+            .map(|r| {
+                let body: String = r.body.to_string().chars().take(1200).collect();
+                format!("(데모 데이터) {} {:?}: {body}", r.path, r.params)
+            })
+            .collect()
+    };
+    let mocked_writes = job
+        .mocks
+        .iter()
+        .filter(|m| m.method != "GET")
+        .map(|m| format!("{} {}", m.method, m.path))
+        .collect();
+    Ok(mwa_manual::shotplan::Context {
+        feature_label: &f.label,
+        routes,
+        snapshots,
+        data: data.join("\n"),
+        labels,
+        mocked_writes,
+    })
 }
 
 /// Demo responses from the world file, plus empty successes for writes whose result the
@@ -1602,12 +2412,23 @@ fn world_input(
             code.push('\n');
         }
     }
+    // Scenes of the old manual (if described) shape the demo data.
+    let scenes = mwa_manual::reference::for_feature(ws, key)
+        .map(|d| {
+            d.images
+                .iter()
+                .filter_map(|i| i.scene.as_ref().filter(|s| s.capture))
+                .map(|s| format!("- {} — {}", s.screen, s.state))
+                .collect()
+        })
+        .unwrap_or_default();
     let input = mwa_manual::world::FeatureInput {
         key: key.to_string(),
         label: f.label.clone(),
         shapes,
         code,
         hints,
+        scenes,
     };
     Ok((input, fp))
 }
@@ -1732,8 +2553,8 @@ fn gen_options<'a>(
     ws: &'a Path,
     ctx: &'a ProductCtx,
     feature: &'a str,
-    template: Option<(String, String)>,
-    compare: Option<(String, String)>,
+    template: Option<mwa_manual::reference::Example>,
+    compare: Option<mwa_manual::reference::Example>,
 ) -> mwa_manual::pipeline::Options<'a> {
     let shots = mwa_capture::menus::load_manifest(ws)
         .map(|m| {
@@ -1768,23 +2589,42 @@ fn gen_options<'a>(
         alias_prefix: ctx.adapter.alias_prefix,
         stop_dirs: ctx.adapter.stop_dirs,
         template_example: template,
-        compare_with: compare,
+        compare_with: compare.map(|c| (c.name, c.text)),
         shots,
     }
 }
 
+/// ③ "코드 읽기": the feature's code facts, kept with the commits they were read from (so a
+/// later change of the code is noticed).
 async fn generate_manual(
     ws: &Path,
     cfg: &Config,
     feature: &str,
-    template: Option<(String, String)>,
-    compare: Option<(String, String)>,
     progress: impl Fn(String) + Send + Sync,
 ) -> Result<mwa_manual::model::ManualRun> {
     let ctx = product_ctx(ws, cfg)?;
     let d = open_dispatcher(ws, cfg.clone())?;
-    let opts = gen_options(ws, &ctx, feature, template, compare);
-    Ok(mwa_manual::pipeline::generate(&d, &ctx.map, opts, &progress).await?)
+    let opts = gen_options(ws, &ctx, feature, None, None);
+    let run = mwa_manual::pipeline::read_code(&d, &ctx.map, opts, &progress).await?;
+    let sources = snapshots(cfg)
+        .into_iter()
+        .filter_map(|(name, s)| {
+            let s = s.ok()?;
+            Some(mwa_manual::versions::SourceAt {
+                name,
+                preview: s.is_preview(),
+                sha: s.sha,
+                branch: s.branch,
+            })
+        })
+        .collect();
+    let template = std::fs::read_to_string(ws.join(mwa_manual::pipeline::TEMPLATE_FILE))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["source"].as_str().map(String::from))
+        .unwrap_or_default();
+    mwa_manual::versions::save(ws, &run, sources, &template)?;
+    Ok(run)
 }
 
 /// Profiles and credential state; never includes passwords.
@@ -1818,10 +2658,7 @@ fn auth_list_lines(cfg: &Config, store: &mwa_capture::creds::CredStore) -> Vec<S
 }
 
 fn which(bin: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(bin))
-        .find(|p| p.is_file())
+    mwa_backends::find_command(bin)
 }
 
 #[cfg(test)]

@@ -207,6 +207,8 @@ pub async fn capture(
                 out: dir.join(format!("{}.png", t.key)),
                 steps: Vec::new(),
                 capture: "page".into(),
+                region: Vec::new(),
+                ratio: None,
                 aria: false,
             })
             .collect();

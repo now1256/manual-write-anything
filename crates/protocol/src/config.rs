@@ -33,6 +33,33 @@ pub struct Config {
     pub capture: Option<CaptureCfg>,
     #[serde(default)]
     pub manual: ManualCfg,
+    /// Where manuals are published. The API token lives in the user's credential file.
+    #[serde(default)]
+    pub confluence: Option<ConfluenceCfg>,
+    /// Optional add-ons outside the core work (version, update, write manuals).
+    #[serde(default)]
+    pub extensions: ExtensionsCfg,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionsCfg {
+    /// Publish to Confluence Cloud from the editor.
+    #[serde(default)]
+    pub confluence: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfluenceCfg {
+    /// `https://<site>.atlassian.net`
+    pub base_url: String,
+    /// Atlassian account e-mail (with the API token, the login for the REST API).
+    pub email: String,
+    /// Space key.
+    pub space: String,
+    /// Page id that feature pages go under.
+    pub parent: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -41,6 +68,10 @@ pub struct ManualCfg {
     /// Existing manual (Markdown) per feature key, compared after generation.
     #[serde(default)]
     pub compare: BTreeMap<String, String>,
+    /// Sample manual (Markdown) to learn the format from when the project has no learned
+    /// format yet (`template/schema.json`).
+    #[serde(default)]
+    pub template: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

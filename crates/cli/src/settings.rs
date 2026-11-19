@@ -21,6 +21,25 @@ pub struct Settings {
     #[serde(default)]
     pub backends: Vec<String>,
     pub max_usd_per_run: f64,
+    /// Sample manual to learn the format from (`[manual] template`).
+    #[serde(default)]
+    pub template: String,
+    /// Agent CLI path per `cli:claude-code` backend (empty = find automatically).
+    #[serde(default)]
+    pub agents: Vec<AgentView>,
+    /// Adapter files found in the user's adapter folder (read only): `[name, path]`.
+    #[serde(default)]
+    pub known_adapters: Vec<[String; 2]>,
+    /// Add-on: publish to Confluence (`[extensions] confluence`).
+    #[serde(default)]
+    pub confluence: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AgentView {
+    pub backend: String,
+    #[serde(default)]
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -62,6 +81,9 @@ pub struct CaptureView {
     pub domain: String,
     pub viewport: [u32; 2],
     pub scale: f64,
+    /// Node.js for the capture runner (empty = find automatically).
+    #[serde(default)]
+    pub node: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -119,6 +141,11 @@ pub fn read(ws: &Path) -> Result<Settings, String> {
             domain: c.domain.clone().unwrap_or_default(),
             viewport: c.viewport,
             scale: c.scale,
+            node: if c.node == "node" {
+                String::new()
+            } else {
+                c.node.clone()
+            },
         }),
         roles: Role::ALL
             .iter()
@@ -134,7 +161,45 @@ pub fn read(ws: &Path) -> Result<Settings, String> {
             .collect(),
         backends: cfg.backends.keys().cloned().collect(),
         max_usd_per_run: cfg.budget.max_usd_per_run,
+        confluence: cfg.extensions.confluence,
+        template: cfg.manual.template.clone().unwrap_or_default(),
+        known_adapters: known_adapters(),
+        agents: cfg
+            .backends
+            .iter()
+            .filter_map(|(name, b)| match b {
+                mwa_protocol::config::BackendCfg::ClaudeCode { command, .. } => Some(AgentView {
+                    backend: name.clone(),
+                    command: if command == "claude" {
+                        String::new()
+                    } else {
+                        command.clone()
+                    },
+                }),
+                _ => None,
+            })
+            .collect(),
     })
+}
+
+/// `<data dir>/adapters/*.toml`, the place adapters are kept for reuse across projects.
+pub fn known_adapters() -> Vec<[String; 2]> {
+    let dir = crate::projects::data_dir().join("adapters");
+    let mut out: Vec<[String; 2]> = std::fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+                .filter_map(|p| {
+                    let text = std::fs::read_to_string(&p).ok()?;
+                    let name = mwa_productmap::adapters::from_str(&text).ok()?.name;
+                    Some([name.to_string(), p.display().to_string()])
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
 }
 
 fn set_or_remove(t: &mut Table, key: &str, v: &str) {
@@ -216,6 +281,7 @@ pub fn apply(text: &str, s: &Settings) -> Result<String, String> {
             vp.push(c.viewport[1] as i64);
             t["viewport"] = value(vp);
             t["scale"] = value(c.scale);
+            set_or_remove(t, "node", &c.node);
         }
     }
 
@@ -245,11 +311,81 @@ pub fn apply(text: &str, s: &Settings) -> Result<String, String> {
         .ok_or("[budget]가 표가 아닙니다")?;
     budget["max_usd_per_run"] = value(s.max_usd_per_run);
 
+    let ext = doc
+        .entry("extensions")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_mut()
+        .ok_or("[extensions]가 표가 아닙니다")?;
+    ext["confluence"] = value(s.confluence);
+
+    for a in &s.agents {
+        if let Some(t) = doc
+            .get_mut("backends")
+            .and_then(|b| b.get_mut(&a.backend))
+            .and_then(Item::as_table_mut)
+        {
+            set_or_remove(t, "command", &a.command);
+        }
+    }
+
+    if s.template.trim().is_empty() {
+        if let Some(t) = doc.get_mut("manual").and_then(Item::as_table_mut) {
+            t.remove("template");
+        }
+    } else {
+        let t = doc
+            .entry("manual")
+            .or_insert(Item::Table(Table::new()))
+            .as_table_mut()
+            .ok_or("[manual]가 표가 아닙니다")?;
+        t["template"] = value(s.template.trim());
+    }
+
     Ok(doc.to_string())
+}
+
+/// Missing values, in words a user understands (before the strict config check).
+fn missing(s: &Settings) -> Option<String> {
+    for (i, src) in s.sources.iter().enumerate() {
+        if src.name.trim().is_empty() {
+            return Some(format!("{}번째 코드 소스의 이름을 적으세요", i + 1));
+        }
+        if src.path.trim().is_empty() && src.git.trim().is_empty() {
+            return Some(format!(
+                "코드 소스 '{}'의 폴더나 Git 주소를 적으세요",
+                src.name
+            ));
+        }
+    }
+    if let Some(p) = &s.product {
+        if p.frontend.trim().is_empty() {
+            return Some("제품의 프론트 소스를 고르세요".into());
+        }
+        if p.backend.trim().is_empty() {
+            return Some("제품의 백엔드 소스를 고르세요".into());
+        }
+        if p.adapter.trim().is_empty() {
+            return Some("제품의 어댑터 파일을 고르세요".into());
+        }
+    }
+    for p in &s.profiles {
+        if p.name.trim().is_empty() || p.base_url.trim().is_empty() || p.user_id.trim().is_empty() {
+            return Some("계정의 이름·사이트 주소·아이디를 모두 적으세요".into());
+        }
+    }
+    if let Some(c) = &s.capture
+        && !s.profiles.iter().any(|p| p.name.trim() == c.profile.trim())
+    {
+        return Some("촬영에 쓸 계정을 고르세요".into());
+    }
+    None
 }
 
 /// Validates and writes. On any error the file is left unchanged.
 pub fn save(ws: &Path, s: &Settings) -> Result<(), String> {
+    if let Some(m) = missing(s) {
+        return Err(format!("저장하지 않았습니다: {m}"));
+    }
     let path = ws.join(CONFIG_FILE);
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let new = apply(&text, s)?;
@@ -300,9 +436,12 @@ mod tests {
             domain: "tenant-a".into(),
             viewport: [1440, 900],
             scale: 2.0,
+            node: String::new(),
         });
+        s.agents[0].command = "/opt/claude/bin/claude".into();
         s.roles[1].model = "opus".into();
         s.max_usd_per_run = 3.0;
+        s.template = "/docs/sample-manual.md".into();
         save(dir.path(), &s).unwrap();
 
         let text = std::fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap();
@@ -317,6 +456,8 @@ mod tests {
         assert_eq!(back.capture, s.capture);
         assert_eq!(back.roles[1].model, "opus");
         assert_eq!(back.max_usd_per_run, 3.0);
+        assert_eq!(back.template, "/docs/sample-manual.md");
+        assert_eq!(back.agents[0].command, "/opt/claude/bin/claude");
 
         // Product pointing at a missing source: rejected, file unchanged.
         let mut bad = back.clone();

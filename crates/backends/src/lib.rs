@@ -15,6 +15,32 @@ use mwa_protocol::{BackendCfg, Request, Response};
 use serde_json::Value;
 
 pub use anthropic::Anthropic;
+
+/// Finds an agent CLI: on `PATH` first, then in the usual per-user install locations.
+/// Engines started over `ssh host cmd` or from a desktop app get a minimal `PATH` that misses
+/// `~/.local/bin` and Homebrew, where these CLIs are normally installed.
+pub fn find_command(bin: &str) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(bin);
+    if p.components().count() > 1 {
+        return p.is_file().then(|| p.to_path_buf());
+    }
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|v| std::env::split_paths(&v).collect())
+        .unwrap_or_default();
+    if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        for d in [
+            ".local/bin",
+            ".claude/local",
+            ".npm-global/bin",
+            ".volta/bin",
+            ".bun/bin",
+        ] {
+            dirs.push(home.join(d));
+        }
+    }
+    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(std::path::PathBuf::from));
+    dirs.into_iter().map(|d| d.join(bin)).find(|c| c.is_file())
+}
 pub use claude_code::ClaudeCode;
 pub use openai::OpenAiCompat;
 

@@ -57,10 +57,37 @@ const NAVIGATE = /(다음|이전|취소|닫기|미리\s*보기|뒤로)/;
 const wordsInOrder = (text) =>
   new RegExp(text.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*"));
 
+/** Open dialogs, including confirmation boxes (role=alertdialog). */
+const dialogs = (page) => page.getByRole("dialog").or(page.getByRole("alertdialog"));
+
+const ROLE_KO = {
+  button: "버튼", link: "링크", tab: "탭", row: "행", cell: "칸", checkbox: "체크박스", textbox: "입력칸",
+  combobox: "선택 상자", option: "선택 항목", dialog: "창", alertdialog: "확인 창", heading: "제목", menuitem: "메뉴 항목",
+};
+
+/** Plain-language reason for a failed step (shown to the user). */
+function explain(step, err) {
+  const m = String(err?.message ?? err);
+  const what = `${step.name ? `'${step.name}' ` : ""}${ROLE_KO[step.role] ?? step.role}`;
+  let n;
+  if ((n = m.match(/일치 (\d+)개/))) {
+    return Number(n[1]) === 0 ? `${what}을(를) 화면에서 찾지 못함` : `같은 ${what}이(가) ${n[1]}개라 하나를 고를 수 없음`;
+  }
+  if (/누르지 않습니다/.test(m)) return m;
+  if (/intercepts pointer events|not visible|outside of the viewport/.test(m)) return `${what}이(가) 가려져 있거나 보이지 않아 누를 수 없음`;
+  if (/not enabled|disabled/.test(m)) return `${what}이(가) 비활성 상태라 누를 수 없음`;
+  if ((n = m.match(/Timeout (\d+)ms/))) {
+    const sec = Math.round(Number(n[1]) / 1000);
+    return step.action === "wait" ? `${sec}초 기다려도 ${what}이(가) 나타나지 않음` : `${sec}초 안에 ${what} 동작을 끝내지 못함`;
+  }
+  return m.split("\n")[0];
+}
+
 /** Exactly one element for a planned step, or an error explaining what matched. */
 async function locate(page, step) {
   let scope = page;
-  if (step.within === "dialog") scope = page.getByRole("dialog").last();
+  // Side drawers are often not role=dialog; without an open dialog, search the whole page.
+  if (step.within === "dialog" && (await dialogs(page).count()) > 0) scope = dialogs(page).last();
   // Row text joins cells without reliable spacing: match the words in order.
   if (step.row) scope = scope.getByRole("row").filter({ hasText: wordsInOrder(step.row) });
   const target = (s) =>
@@ -88,7 +115,7 @@ async function runStep(page, step, idle) {
   switch (step.action) {
     case "click": {
       const loc = await locate(page, step);
-      const dialogOpen = (await page.getByRole("dialog").count()) > 0;
+      const dialogOpen = (await dialogs(page).count()) > 0;
       if (dialogOpen && COMMIT.test(step.name) && !NAVIGATE.test(step.name)) {
         throw new Error(`대화상자 안의 실행 버튼 "${step.name}"은 누르지 않습니다`);
       }
@@ -108,9 +135,11 @@ async function runStep(page, step, idle) {
       break;
     case "wait": {
       let scope = page;
-      if (step.within === "dialog") scope = page.getByRole("dialog").last();
-      await scope.getByRole(step.role, { name: step.name || undefined, exact: !!step.exact }).first()
-        .waitFor({ state: "visible", timeout: 10000 });
+      if (step.within === "dialog" && (await dialogs(page).count()) > 0) scope = dialogs(page).last();
+      const opts = { name: step.name || undefined, exact: !!step.exact };
+      let target = scope.getByRole(step.role, opts);
+      if (step.role === "dialog") target = target.or(scope.getByRole("alertdialog", opts));
+      await target.first().waitFor({ state: "visible", timeout: 10000 });
       break;
     }
     default:
@@ -120,7 +149,104 @@ async function runStep(page, step, idle) {
   await page.waitForTimeout(300);
 }
 
-const ariaOf = async (page) => (await page.locator("body").ariaSnapshot()).slice(0, 30000);
+/**
+ * Area to cut out, in page coordinates: the smallest element holding every `region` text (an old
+ * manual's crop), else the open dialog; widened to `ratio` (old picture's width / height).
+ */
+async function cutBox(page, shot) {
+  let box = null;
+  let found = false;
+  if (shot.region?.length) {
+    // A picture slot of a new manual (no old picture to match) shows a whole dialog or drawer.
+    const whole = !shot.ratio;
+    box = await page.evaluate(({ texts, whole }) => {
+      const norm = (t) => (t || "").replace(/\s+/g, "");
+      const want = texts.map(norm).filter(Boolean);
+      const shown = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      // Input hints count as text: a search box shows its placeholder, not innerText.
+      const textOf = (el) =>
+        norm(el.innerText) +
+        Array.from(el.matches("input, textarea") ? [el] : el.querySelectorAll("input, textarea"))
+          .map((i) => norm(i.placeholder) + norm(i.value))
+          .join("");
+      const holds = (el, t) => textOf(el).includes(t);
+      const all = Array.from(document.querySelectorAll("body *")).filter(shown);
+      // Deepest elements holding the first text, then up until every text is inside.
+      const starts = all.filter((el) => holds(el, want[0]) && !Array.from(el.children).some((c) => holds(c, want[0])));
+      let best = null;
+      for (const st of starts) {
+        let el = st;
+        while (el && !want.every((t) => holds(el, t))) el = el.parentElement;
+        if (!el || el === document.body) continue;
+        if (whole) el = el.closest('[role="dialog"], [role="alertdialog"]') ?? el;
+        const r = el.getBoundingClientRect();
+        if (!best || r.width * r.height < best.width * best.height) {
+          best = { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+        }
+      }
+      return best;
+    }, { texts: shot.region, whole });
+    found = !!box;
+  }
+  if (!box && shot.capture === "dialog") {
+    const b = await dialogs(page).last().boundingBox();
+    const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+    if (b) box = { x: b.x + scroll.x, y: b.y + scroll.y, width: b.width, height: b.height };
+  }
+  if (!box && shot.ratio && shot.capture === "page") {
+    // Whole screen in the old picture: same proportions from the top.
+    const vp = page.viewportSize();
+    const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+    return {
+      box: { x: scroll.x, y: scroll.y, width: vp.width, height: Math.min(vp.height, vp.width / shot.ratio) },
+      found: false,
+    };
+  }
+  if (!box) return null;
+  const doc = await page.evaluate(() => ({
+    w: document.documentElement.scrollWidth,
+    h: Math.max(document.documentElement.scrollHeight, window.innerHeight),
+  }));
+  // A picture slot is cut at the dialog's own edge; an old manual's picture had some margin.
+  const pad = shot.ratio ? 8 : 1;
+  let { x, y, width: w, height: h } = box;
+  x -= pad;
+  y -= pad;
+  w += pad * 2;
+  h += pad * 2;
+  if (shot.ratio) {
+    if (w / h < shot.ratio) {
+      const nw = Math.min(h * shot.ratio, doc.w);
+      x -= (nw - w) / 2;
+      w = nw;
+    } else {
+      const nh = Math.min(w / shot.ratio, doc.h);
+      y -= (nh - h) / 2;
+      h = nh;
+    }
+  }
+  x = Math.max(0, Math.min(x, doc.w - w));
+  y = Math.max(0, Math.min(y, doc.h - h));
+  return { box: { x, y, width: Math.min(w, doc.w), height: Math.min(h, doc.h) }, found };
+}
+
+// Open overlays first: they render last in the DOM and would be cut from a long page snapshot.
+const OVERLAYS = '[role="dialog"], [role="alertdialog"], [role="complementary"], aside, [data-state="open"]';
+const ariaOf = async (page) => {
+  const parts = [];
+  const overlays = page.locator(OVERLAYS);
+  const n = Math.min(await overlays.count(), 4);
+  for (let i = 0; i < n; i++) {
+    const o = overlays.nth(i);
+    if (!(await o.isVisible().catch(() => false))) continue;
+    parts.push("# 열린 창 " + (i + 1) + "\n" + (await o.ariaSnapshot().catch(() => "")).slice(0, 12000));
+  }
+  const body = (await page.locator("body").ariaSnapshot()).slice(0, 30000 - parts.join("").length);
+  return [...parts, "# 전체 화면\n" + body].join("\n\n");
+};
 
 /** Most specific demo response for a request, or undefined. */
 function findMock(mocks, method, url) {
@@ -197,6 +323,19 @@ async function main() {
         return route.abort("blockedbyclient");
       });
       const idle = apiIdle(page, job.settleMs, job.timeoutMs);
+      // GET /api/* bodies seen while probing: tells the planner what data really exists.
+      const apiData = [];
+      if (shot.aria) {
+        page.on("response", async (r) => {
+          try {
+            const u = new URL(r.url());
+            if (r.request().method() !== "GET" || !u.pathname.startsWith("/api/") || u.pathname.startsWith("/api/auth")) return;
+            if (!(r.headers()["content-type"] ?? "").includes("json")) return;
+            const body = await r.text();
+            apiData.push({ path: u.pathname + u.search, body: body.slice(0, 1500) });
+          } catch {}
+        });
+      }
       const started = Date.now();
       const result = { type: "shot", id: shot.id, out: shot.out, blocked, mocked, consoleErrors };
       try {
@@ -211,16 +350,42 @@ async function main() {
           result.ok = false;
           result.error = "로그인 화면으로 이동됨 (세션 없음 또는 만료)";
         } else {
+          result.stepsLog = [];
           for (const [i, step] of (shot.steps ?? []).entries()) {
+            const t0 = Date.now();
             try {
               await runStep(page, step, idle);
+              result.stepsLog.push({ ok: true, ms: Date.now() - t0 });
             } catch (e) {
+              const plain = explain(step, e);
+              result.stepsLog.push({ ok: false, ms: Date.now() - t0, error: plain });
               result.failedStep = i;
               result.aria = await ariaOf(page).catch(() => undefined);
-              throw new Error(`단계 ${i + 1}(${step.action} ${step.role} "${step.name}"): ${String(e.message ?? e).split("\n")[0]}`);
+              // What the screen looked like when it got stuck.
+              const failOut = shot.out.replace(/\.png$/, ".fail.png");
+              if (await page.screenshot({ path: failOut, animations: "disabled" }).then(() => true).catch(() => false)) {
+                result.failShot = failOut;
+              }
+              throw new Error(`단계 ${i + 1}: ${plain}`);
             }
           }
-          if (shot.aria) result.aria = await ariaOf(page);
+          if (shot.aria) {
+            result.aria = await ariaOf(page);
+            // Planning needs what really exists: open each tab and keep the GET data it loads.
+            const tabs = page.getByRole("tab");
+            const count = Math.min(await tabs.count(), 6);
+            for (let t = 1; t < count; t++) {
+              const tab = tabs.nth(t);
+              const label = (await tab.innerText().catch(() => "")).trim();
+              if (!(await tab.isVisible().catch(() => false))) continue;
+              await tab.click({ timeout: 5000 }).catch(() => {});
+              await idle.wait();
+              await page.waitForTimeout(300);
+              result.aria += `\n\n# 탭 '${label}'을 연 화면\n` + (await ariaOf(page)).slice(0, 12000);
+            }
+            await tabs.first().click({ timeout: 5000 }).catch(() => {});
+            result.apiData = apiData.slice(0, 40);
+          }
           // Notices on screen at capture time: an error toast makes the image unusable.
           result.toasts = job.toastSelector
             ? await page
@@ -231,12 +396,23 @@ async function main() {
                 )
             : [];
           const mask = (job.maskButtons ?? []).map((name) => page.getByRole("button", { name }));
+          const vp = page.viewportSize();
           if (shot.capture === "dialog") {
-            await page.getByRole("dialog").last().screenshot({ path: shot.out, animations: "disabled" });
+            // Tall enough that a max-height modal shows its whole body (messages at the bottom).
+            await page.setViewportSize({ width: vp.width, height: Math.max(vp.height, 1600) });
+            await page.waitForTimeout(400);
+          }
+          const clip = await cutBox(page, shot);
+          if (shot.region?.length && !clip?.found) result.regionMissed = true;
+          if (clip) {
+            await page.screenshot({ path: shot.out, clip: clip.box, fullPage: true, mask, maskColor: "#c9ced6", animations: "disabled" });
+          } else if (shot.capture === "dialog") {
+            await dialogs(page).last().screenshot({ path: shot.out, animations: "disabled", timeout: 10000 });
           } else {
             const fullPage = shot.capture === "full";
             await page.screenshot({ path: shot.out, fullPage, mask, maskColor: "#c9ced6", animations: "disabled" });
           }
+          if (shot.capture === "dialog") await page.setViewportSize(vp);
           result.ok = true;
         }
       } catch (e) {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::diff::diff;
 use crate::menus::STABLE_THRESHOLD;
-use crate::shoot::{Blocked, Job, JobShot, ShootError, ShotEvent, Step, run_sidecar};
+use crate::shoot::{Blocked, Job, JobShot, ShootError, ShotEvent, Step, StepLog, run_sidecar};
 
 /// How to reach and capture one screen the manual asks for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -21,6 +21,12 @@ pub struct Plan {
     pub steps: Vec<Step>,
     /// `page`, `full` or `dialog`.
     pub capture: String,
+    /// Texts inside the area to cut out (an old manual's crop); empty = the whole capture.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub region: Vec<String>,
+    /// Width / height of the picture to match (the old manual's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,6 +54,18 @@ pub struct DetailRecord {
     /// Accessibility snapshot at the failing step, for re-planning. Not persisted.
     #[serde(skip)]
     pub aria: Option<String>,
+    /// Per-step results of the first run.
+    #[serde(default)]
+    pub steps_log: Vec<StepLog>,
+    /// Picture of the screen where a step failed, relative to the workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fail_file: Option<String>,
+    /// Requests answered from demo data (`METHOD /path`).
+    #[serde(default)]
+    pub mocked: Vec<String>,
+    /// The planned area was not found, so the picture is not cut like the old one.
+    #[serde(default)]
+    pub region_missed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -116,6 +134,8 @@ pub async fn probe(
             out: tmp.join(format!("probe{i}.png")),
             steps: Vec::new(),
             capture: "page".into(),
+            region: Vec::new(),
+            ratio: None,
             aria: true,
         })
         .collect();
@@ -123,19 +143,19 @@ pub async fn probe(
 }
 
 /// Runs every plan `runs` times, compares runs and keeps the first run's picture under
-/// `shots/detail/<feature>/<todo>.png`.
+/// `shots/<dir>/<todo>.png` (e.g. `dir` = `detail/<feature>`).
 pub async fn shoot(
     sc: Sidecar<'_>,
     job: &Job,
     ws: &Path,
-    feature: &str,
+    dir: &str,
     plans: &[Plan],
     runs: u32,
     mut progress: impl FnMut(String),
 ) -> Result<Vec<DetailRecord>, ShootError> {
     let stamp = job.fixed_time;
     let tmp = ws.join(format!(".mwa/shots/detail-{stamp}"));
-    let final_dir = ws.join(format!("shots/detail/{feature}"));
+    let final_dir = ws.join("shots").join(dir);
     std::fs::create_dir_all(&final_dir)?;
     let path_of = |run: u32, todo: &str| tmp.join(format!("run{run}/{todo}.png"));
 
@@ -151,6 +171,8 @@ pub async fn shoot(
                 out: path_of(run, &p.todo),
                 steps: p.steps.clone(),
                 capture: p.capture.clone(),
+                region: p.region.clone(),
+                ratio: p.ratio,
                 aria: false,
             })
             .collect();
@@ -195,7 +217,24 @@ pub async fn shoot(
                 .any(|e| !e.mocked.is_empty())
                 .then(|| "world".to_string()),
             aria: first.and_then(|e| e.aria.clone()),
+            steps_log: first.map(|e| e.steps_log.clone()).unwrap_or_default(),
+            fail_file: None,
+            mocked: Vec::new(),
+            region_missed: first.is_some_and(|e| e.region_missed),
         };
+        for e in &evs {
+            for m in &e.mocked {
+                if !rec.mocked.contains(m) {
+                    rec.mocked.push(m.clone());
+                }
+            }
+        }
+        if let Some(src) = first.and_then(|e| e.fail_shot.as_deref()) {
+            let dest = final_dir.join(format!("{}.fail.png", p.todo));
+            if std::fs::copy(src, &dest).is_ok() {
+                rec.fail_file = Some(format!("shots/{dir}/{}.fail.png", p.todo));
+            }
+        }
         for e in &evs {
             for b in &e.blocked {
                 if !rec.blocked.contains(b) {
@@ -216,7 +255,7 @@ pub async fn shoot(
             }
             let dest = final_dir.join(format!("{}.png", p.todo));
             std::fs::copy(path_of(1, &p.todo), &dest)?;
-            rec.file = Some(format!("shots/detail/{feature}/{}.png", p.todo));
+            rec.file = Some(format!("shots/{dir}/{}.png", p.todo));
         }
         rec.needs_retake = if !rec.blocked.is_empty() {
             Some("화면이 데모 데이터에 없는 쓰기 요청을 보내 차단했습니다".into())

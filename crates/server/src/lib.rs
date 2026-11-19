@@ -90,6 +90,66 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
         .route("/api/chat-model", axum::routing::post(set_chat_model))
         .route("/api/projects", get(projects).post(create_project))
         .route("/api/settings", get(settings).put(save_settings))
+        .route("/api/setup", get(setup))
+        .route("/api/fs", get(browse))
+        .route("/api/references", get(references))
+        .route("/api/references/shots/{feature}", get(reference_shots))
+        .route("/api/docs/{feature}", get(document).put(save_document))
+        .route(
+            "/api/docs/{feature}/assets",
+            axum::routing::post(save_document_asset)
+                .layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)),
+        )
+        .route("/api/docs/{feature}/assets/{file}", get(document_asset))
+        .route("/api/docs/{feature}/versions", get(document_versions))
+        .route("/api/docs/{feature}/versions/{n}", get(document_version))
+        .route("/api/docs/{feature}/proposals", get(proposals))
+        .route("/api/docs/{feature}/assist", axum::routing::post(assist))
+        .route("/api/docs/{feature}/provenance", get(provenance))
+        .route("/api/docs/{feature}/grounding", get(grounding))
+        .route(
+            "/api/docs/{feature}/confluence",
+            get(confluence_status).post(confluence_publish),
+        )
+        .route(
+            "/api/confluence/setup",
+            axum::routing::post(confluence_setup),
+        )
+        .route("/api/manuals", get(manuals_status))
+        .route(
+            "/api/docs/{feature}/restore/{n}",
+            axum::routing::post(restore_document),
+        )
+        .route(
+            "/api/references/shots/{feature}/choice",
+            axum::routing::post(scene_choice),
+        )
+        .route("/api/references/link", axum::routing::post(link_reference))
+        .route(
+            "/api/references/upload",
+            axum::routing::post(upload_reference)
+                .layer(axum::extract::DefaultBodyLimit::max(200 * 1024 * 1024)),
+        )
+        .route(
+            "/api/docs/{feature}/proposals/{id}",
+            axum::routing::delete(resolve_proposal),
+        )
+        .route(
+            "/api/references/shots/{feature}/upload",
+            axum::routing::post(scene_upload)
+                .delete(scene_unupload)
+                .layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)),
+        )
+        .route("/api/manual/{key}/versions", get(manual_versions))
+        .route("/api/manual/{key}/versions/{n}", get(manual_version))
+        .route(
+            "/api/references/import",
+            axum::routing::post(import_references),
+        )
+        .route("/api/references/{id}", get(reference).post(set_reference))
+        .route("/api/references/{id}/file/{*path}", get(reference_file))
+        .route("/api/references/{id}/page/{n}", get(reference_page))
+        .route("/api/check", axum::routing::post(check))
         .route("/api/settings/password", axum::routing::post(set_password))
         .route("/api/projects/open", axum::routing::post(open_project))
         .route("/api/ws", get(ws::upgrade));
@@ -326,6 +386,409 @@ async fn set_password(State(hub): State<Arc<Hub>>, Json(body): Json<PasswordBody
         }
         Err(e) => bad_request(&e),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct BrowseQuery {
+    path: Option<String>,
+    ext: Option<String>,
+}
+
+async fn browse(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Query(q): axum::extract::Query<BrowseQuery>,
+) -> Response {
+    match hub.host().browse(q.path.as_deref(), q.ext.as_deref()) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn reference_shots(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Response {
+    match hub.host().reference_shots(&feature) {
+        Some(v) => Json(v).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn document(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Response {
+    match hub.host().document(&feature) {
+        Some(v) => Json(v).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DocBody {
+    html: String,
+    #[serde(default)]
+    changes: serde_json::Value,
+    /// Version the edits started from (refused when the document has moved on).
+    #[serde(default)]
+    base: Option<u32>,
+}
+
+async fn save_document(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<DocBody>,
+) -> Response {
+    let changes = if b.changes.is_null() {
+        json!([])
+    } else {
+        b.changes
+    };
+    if let (Some(base), Some(cur)) = (
+        b.base,
+        hub.host()
+            .document(&feature)
+            .and_then(|d| d["version"].as_u64()),
+    ) && u64::from(base) != cur
+    {
+        return bad_request(&format!(
+            "문서가 그사이 바뀌어 저장하지 않았습니다 (지금 버전 {cur}, 편집은 버전 {base} 기준). 새 버전을 불러와 다시 고치세요"
+        ));
+    }
+    match hub.host().save_document(&feature, &b.html, changes) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct AssetQuery {
+    name: String,
+}
+
+/// Raw picture bytes in the body, file name in `?name=`.
+async fn save_document_asset(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<AssetQuery>,
+    body: axum::body::Bytes,
+) -> Response {
+    match hub.host().save_document_asset(&feature, &q.name, &body) {
+        Ok(file) => Json(json!({ "file": file })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn document_asset(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((feature, file)): axum::extract::Path<(String, String)>,
+) -> Response {
+    match hub
+        .host()
+        .document_asset(&feature, &file)
+        .and_then(|p| std::fs::read(p).ok())
+    {
+        Some(data) => file_response(&file, data),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn document_versions(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().document_versions(&feature))
+}
+
+async fn document_version(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((feature, n)): axum::extract::Path<(String, u32)>,
+) -> Response {
+    match hub.host().document_version(&feature, n) {
+        Some(v) => Json(v).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn manuals_status(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    Json(hub.host().manuals_status())
+}
+
+async fn confluence_status(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().confluence_status(&feature))
+}
+
+async fn confluence_setup(
+    State(hub): State<Arc<Hub>>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    match hub.host().confluence_setup(b).await {
+        Ok(found) => Json(json!({ "found": found })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn confluence_publish(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    match hub.host().confluence_publish(&feature, b).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn grounding(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().grounding(&feature))
+}
+
+async fn provenance(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().provenance(&feature))
+}
+
+async fn proposals(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().proposals(&feature))
+}
+
+async fn resolve_proposal(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((feature, id)): axum::extract::Path<(String, String)>,
+) -> Response {
+    match hub.host().resolve_proposal(&feature, &id) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SceneUploadQuery {
+    image: String,
+    #[serde(default)]
+    name: String,
+}
+
+/// Raw picture bytes in the body; `?image=` is the old manual's picture it stands in for.
+async fn scene_upload(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<SceneUploadQuery>,
+    body: axum::body::Bytes,
+) -> Response {
+    match hub
+        .host()
+        .set_scene_upload(&feature, &q.image, Some((&q.name, &body)))
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn scene_unupload(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<SceneUploadQuery>,
+) -> Response {
+    match hub.host().set_scene_upload(&feature, &q.image, None) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn restore_document(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((feature, n)): axum::extract::Path<(String, u32)>,
+) -> Response {
+    match hub.host().restore_document(&feature, n) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SceneChoice {
+    image: String,
+    #[serde(default)]
+    choice: Option<String>,
+}
+
+async fn scene_choice(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<SceneChoice>,
+) -> Response {
+    match hub.host().set_scene_choice(&feature, &b.image, b.choice) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LinkBody {
+    feature: String,
+    id: String,
+}
+
+async fn link_reference(State(hub): State<Arc<Hub>>, Json(b): Json<LinkBody>) -> Response {
+    match hub.host().link_reference(&b.feature, &b.id) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct UploadQuery {
+    feature: String,
+    name: String,
+}
+
+/// Raw PDF bytes in the body.
+async fn upload_reference(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Query(q): axum::extract::Query<UploadQuery>,
+    body: axum::body::Bytes,
+) -> Response {
+    match hub
+        .host()
+        .upload_reference(&q.feature, &q.name, body.to_vec())
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn assist(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    match hub.host().assist(&feature, b).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn manual_versions(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(key): axum::extract::Path<String>,
+) -> Json<serde_json::Value> {
+    Json(hub.host().manual_versions(&key))
+}
+
+async fn manual_version(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((key, n)): axum::extract::Path<(String, u32)>,
+) -> Response {
+    match hub.host().manual_version(&key, n) {
+        Some(v) => Json(v).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn references(State(hub): State<Arc<Hub>>) -> Response {
+    match hub.host().references() {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn reference(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match hub.host().reference(&id) {
+        Some(v) => Json(v).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ImportBody {
+    paths: Vec<String>,
+}
+
+async fn import_references(State(hub): State<Arc<Hub>>, Json(b): Json<ImportBody>) -> Response {
+    match hub.host().import_references(b.paths).await {
+        Ok(lines) => Json(json!({ "lines": lines })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RefChoice {
+    #[serde(default)]
+    feature: Option<String>,
+    #[serde(default)]
+    ignored: bool,
+}
+
+async fn set_reference(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(b): Json<RefChoice>,
+) -> Response {
+    match hub.host().set_reference(&id, b.feature, b.ignored) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn reference_file(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((id, path)): axum::extract::Path<(String, String)>,
+) -> Response {
+    match hub
+        .host()
+        .reference_file(&id, &path)
+        .and_then(|p| std::fs::read(p).ok())
+    {
+        Some(data) => file_response(&path, data),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn reference_page(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path((id, n)): axum::extract::Path<(String, u32)>,
+) -> Response {
+    match hub
+        .host()
+        .reference_page(&id, n)
+        .and_then(|p| std::fs::read(p).map_err(|e| e.to_string()))
+    {
+        Ok(data) => file_response("page.png", data),
+        Err(e) => bad_request(&e),
+    }
+}
+
+async fn setup(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    Json(json!({ "steps": hub.host().setup_steps() }))
+}
+
+#[derive(serde::Deserialize)]
+struct CheckBody {
+    kind: String,
+    #[serde(default)]
+    value: String,
+    #[serde(default)]
+    extra: String,
+}
+
+async fn check(State(hub): State<Arc<Hub>>, Json(b): Json<CheckBody>) -> Json<mwa_host::Check> {
+    Json(hub.host().check(&b.kind, &b.value, &b.extra).await)
 }
 
 fn bad_request(msg: &str) -> Response {

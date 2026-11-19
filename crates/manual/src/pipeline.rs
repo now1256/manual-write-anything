@@ -1,4 +1,5 @@
-//! One feature end to end. Writes `manual/<key>.json` (everything) and `manual/<key>.md`.
+//! Reading one feature's code: its facts (map facts and checked code facts) in
+//! `manual/<key>.json`, what manuals are written from.
 
 use std::path::{Path, PathBuf};
 
@@ -7,10 +8,9 @@ use mwa_productmap::graph::Project;
 use mwa_productmap::map::{Feature, ProductMap};
 
 use crate::ManualError;
-use crate::labels::{self, Label};
-use crate::model::{Fact, FactKind, ManualRun, Template};
+use crate::facts;
+use crate::model::{Fact, FactKind, ManualRun};
 use crate::slice::{self, Slice};
-use crate::{compare, facts, render, template, verify, write};
 
 pub struct Options<'a> {
     pub workspace: &'a Path,
@@ -20,8 +20,8 @@ pub struct Options<'a> {
     pub backend_code_dir: &'a str,
     pub alias_prefix: &'a str,
     pub stop_dirs: &'a [&'a str],
-    /// (name, markdown) of an example manual to learn the template from; otherwise the saved one is used.
-    pub template_example: Option<(String, String)>,
+    /// Example manual to learn the template from; otherwise the saved one is used.
+    pub template_example: Option<crate::reference::Example>,
     /// (name, markdown) of an existing page for this feature to compare against.
     pub compare_with: Option<(String, String)>,
     /// Captured screenshots available: (shot id, what it shows).
@@ -136,7 +136,9 @@ pub fn load_run(workspace: &Path, key: &str) -> Option<ManualRun> {
     .ok()
 }
 
-pub async fn generate(
+/// Reads a feature's code (D-045): facts from the product map and from the code, each quoted
+/// line checked. What the editable manual is written from; no draft is written any more.
+pub async fn read_code(
     d: &Dispatcher,
     map: &ProductMap,
     opts: Options<'_>,
@@ -150,144 +152,20 @@ pub async fn generate(
             ManualError::Invalid(format!("지도에 없는 기능 키입니다: {}", opts.feature))
         })?;
     let spent_before = d.spent_usd();
-
     let slice = build_slice(map, f, &opts)?;
     progress(format!(
-        "코드 조각: 파일 {}개, {}줄 (프론트 {} · 백엔드 {})",
+        "코드 조각: 파일 {}개, {}줄",
         slice.files.len(),
-        slice.total_lines(),
-        slice
-            .files
-            .iter()
-            .filter(|x| x.repo == crate::model::Repo::Frontend)
-            .count(),
-        slice
-            .files
-            .iter()
-            .filter(|x| x.repo == crate::model::Repo::Backend)
-            .count(),
+        slice.total_lines()
     ));
-    let labels: Vec<Label> = labels::extract(&slice);
-    progress(format!("화면 라벨 {}개 (코드에서 직접 추출)", labels.len()));
-
-    let template_path = opts.workspace.join(TEMPLATE_FILE);
-    let tmpl: Template = match &opts.template_example {
-        Some((name, md)) => {
-            progress(format!("양식 학습: {name}"));
-            let t = template::learn(d, md, name).await?;
-            write_json(&template_path, &t)?;
-            t
-        }
-        None => serde_json::from_str(&std::fs::read_to_string(&template_path).map_err(|_| {
-            ManualError::Invalid("양식이 없습니다. 견본 매뉴얼을 지정하세요 (--template)".into())
-        })?)
-        .map_err(|e| ManualError::Shape(format!("{}: {e}", TEMPLATE_FILE)))?,
-    };
-    progress(format!(
-        "양식: 절 {}개, 문체 규칙 {}개",
-        tmpl.sections.len(),
-        tmpl.style_rules.len()
-    ));
-
     let mut all_facts = map_facts(map, f);
     let extracted = facts::extract(d, &slice, &f.label, 60_000, progress).await?;
     progress(format!(
-        "사실 {}개 확보, 근거 인용이 코드와 맞지 않아 버린 사실 {}개",
+        "사실 {}개 (근거 줄이 맞지 않아 버림 {})",
         extracted.facts.len(),
         extracted.dropped.len()
     ));
     all_facts.extend(extracted.facts);
-
-    progress("본문 작성 중…".into());
-    let blocks = write::write(
-        d,
-        &write::Input {
-            title: f.label.clone(),
-            menu_path: menu_path(f),
-            template: &tmpl,
-            facts: &all_facts,
-            labels: &labels,
-            shots: opts.shots.clone(),
-        },
-    )
-    .await?;
-    progress(format!("블록 {}개 작성", blocks.len()));
-
-    let shot_ids: Vec<String> = opts.shots.iter().map(|(id, _)| id.clone()).collect();
-    let extra: Vec<String> = map
-        .features
-        .iter()
-        .flat_map(|x| {
-            [
-                x.label.clone(),
-                x.group.clone().unwrap_or_default(),
-                x.license_menu.clone(),
-            ]
-        })
-        .collect();
-    let mut blocks = blocks;
-    let mut checks = verify::deterministic(&blocks, &all_facts, &labels, &shot_ids, &extra);
-    progress("검증 중…".into());
-    verify::judge(d, &blocks, &all_facts, &mut checks).await?;
-
-    // One repair round for blocks the checks or the judge flagged, then re-verify only those.
-    let flagged: Vec<(crate::model::Block, Vec<String>)> = blocks
-        .iter()
-        .zip(&checks)
-        .filter(|(_, c)| {
-            !c.issues.is_empty() || matches!(c.verdict.as_str(), "partial" | "unsupported")
-        })
-        .map(|(b, c)| {
-            let mut problems = c.issues.clone();
-            if !c.reason.is_empty() && c.verdict != "supported" {
-                problems.push(c.reason.clone());
-            }
-            (b.clone(), problems)
-        })
-        .collect();
-    if !flagged.is_empty() {
-        progress(format!("문제 블록 {}개 다시 쓰는 중…", flagged.len()));
-        let fixed = write::repair(d, &flagged, &all_facts).await?;
-        let mut repaired = 0;
-        for nb in fixed {
-            if let Some(slot) = blocks.iter_mut().find(|b| b.id == nb.id) {
-                *slot = nb;
-                repaired += 1;
-            }
-        }
-        let ids: Vec<&String> = flagged.iter().map(|(b, _)| &b.id).collect();
-        let subset: Vec<crate::model::Block> = blocks
-            .iter()
-            .filter(|b| ids.contains(&&b.id))
-            .cloned()
-            .collect();
-        let mut rechecks = verify::deterministic(&subset, &all_facts, &labels, &shot_ids, &extra);
-        verify::judge(d, &subset, &all_facts, &mut rechecks).await?;
-        for rc in rechecks {
-            if let Some(c) = checks.iter_mut().find(|c| c.id == rc.id) {
-                *c = rc;
-            }
-        }
-        progress(format!("{repaired}개 블록을 고쳐 다시 검증했습니다"));
-    }
-
-    let captions = |id: &str| {
-        opts.shots
-            .iter()
-            .find(|(s, _)| s == id)
-            .map(|(_, c)| c.clone())
-            .unwrap_or_default()
-    };
-    let md = render::markdown(&f.label, &blocks, "../shots/", &captions);
-
-    let compare_items = match &opts.compare_with {
-        Some((name, existing)) => {
-            progress(format!("기존 매뉴얼과 비교: {name}"));
-            Some(compare::compare(d, &md, existing, &all_facts).await?)
-        }
-        None => None,
-    };
-
     let run = ManualRun {
         feature: f.key.clone(),
         title: f.label.clone(),
@@ -295,30 +173,33 @@ pub async fn generate(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|x| x.as_secs())
             .unwrap_or(0),
-        models: [
-            mwa_protocol::Role::Worker,
-            mwa_protocol::Role::Writer,
-            mwa_protocol::Role::Verifier,
-        ]
-        .iter()
-        .filter_map(|r| d.role_model(*r).map(|(b, m)| format!("{r}={b}·{m}")))
-        .collect(),
+        models: [mwa_protocol::Role::Worker]
+            .iter()
+            .filter_map(|r| d.role_model(*r).map(|(b, m)| format!("{r}={b}·{m}")))
+            .collect(),
         cost_usd: d.spent_usd() - spent_before,
         dropped_facts: extracted.dropped.len(),
         facts: all_facts,
-        blocks,
-        checks,
-        compare: compare_items,
-        compare_source: opts.compare_with.as_ref().map(|(n, _)| n.clone()),
+        blocks: Vec::new(),
+        checks: Vec::new(),
+        compare: None,
+        compare_source: None,
     };
     write_json(&opts.workspace.join(format!("manual/{}.json", f.key)), &run)?;
-    let md_path = opts.workspace.join(format!("manual/{}.md", f.key));
-    std::fs::write(&md_path, md).map_err(|e| ManualError::Io(md_path.clone(), e))?;
     Ok(run)
 }
 
 /// Summary lines for CLI/UI.
 pub fn summary(run: &ManualRun) -> Vec<String> {
+    if run.blocks.is_empty() {
+        return vec![format!(
+            "{}: 코드 사실 {}개 (근거 줄이 맞지 않아 버림 {}) · 사용량 정가 환산 ${:.3}",
+            run.title,
+            run.facts.len(),
+            run.dropped_facts,
+            run.cost_usd
+        )];
+    }
     let count = |v: &str| run.checks.iter().filter(|c| c.verdict == v).count();
     let issues: usize = run.checks.iter().map(|c| c.issues.len()).sum();
     let todos = run

@@ -1,79 +1,58 @@
 # 아키텍처
 
-> 설계 개요입니다. 일부 구성 요소(explore, export 등)는 아직 계획 단계입니다.
-
 ## 원칙
 
-- **조율은 Rust 상태 머신이 합니다.** LLM은 정해진 역할의 한 번짜리 판단에만 들어갑니다.
-- **사실은 코드에서 결정적으로 뽑습니다(제품 지도).** LLM에는 기능 조각만 보냅니다. 동작 서술은 실행으로 확인된 것만 단정합니다.
-- **싼 모델이 일하고, 다른 계열 상위 모델이 판정만 합니다.**
-- **제품 맞춤 지식은 프로젝트의 어댑터 파일(`adapter.toml`)과 설정에만 둡니다.** 바이너리에는 특정 제품의 규칙이 들어가지 않습니다. 형식은 [adapter.md](adapter.md).
+- **사실은 코드에서 뽑고, 글은 사실로 씁니다.** 메뉴·화면·API·권한은 결정적으로(제품 지도, LLM 없음), 기능의 동작은 코드 조각에서 사실로 뽑아 인용 줄을 검사합니다. 매뉴얼 문장은 사실이나 기존 매뉴얼에 근거하고, 블록마다 그 근거를 남깁니다.
+- **조율은 Rust가 합니다.** LLM은 정해진 역할의 한 번짜리 판단(사실 추출, 쓰기, 촬영 계획, 판정)에만 들어갑니다.
+- **기존 매뉴얼은 양식의 본보기입니다.** 내용의 출처는 코드이고, 목차·표·말투·그림 자리는 기존 매뉴얼을 따릅니다. 코드로 확인할 수 없는 운영 안내는 기존 글을 남기고 표시합니다.
+- **제품 맞춤 지식은 프로젝트의 `adapter.toml`과 설정에만 둡니다.** 형식은 [adapter.md](adapter.md).
+- **공유 서버에는 쓰지 않습니다.** 촬영 중 쓰기 요청은 브라우저에서 막고, 로그인은 1회만 시도합니다.
 
-## 전체 흐름
+## 흐름
 
 ```
-① 소스 연결(FS) → ② 제품 지도(F1) → ③ 양식 대화(F4) → ④ 생성: 사실(F5)·촬영(F6, F3 상태 준비)·작성(F7)
-→ ⑤ 검증(F8) → ⑥ 대화 편집(F9) → ⑦ 승인=git 커밋, 내보내기(F10)
-⑧ 자동 갱신(F11): 새 커밋 → 지도 diff → 영향 블록만 ④~⑦
-전제: 실행 환경 등급(F0), 접속 프로파일(F2), 모델 백엔드(FB), 안전·비용(F13). 부가: QA(F12)
+설정(코드·제품·사이트) → 제품 지도 → 기능마다:
+  ① 기존 매뉴얼(PDF·MD) 가져오기 → 그림마다 장면 설명
+  ② 같은 장면을 지금 화면으로 찍기(같은 영역·비율) → 장면마다 쓸 그림 고르기 / 올리기
+  ③ 코드 읽기(사실) → 매뉴얼 쓰기(절마다 기존 절 + 사실 → 블록 + 근거) — 기존 매뉴얼이 없으면 만든 매뉴얼을 본보기로
+  ④ 편집(사람·도우미) → 저장 = 버전, 근거 확인(블록 × 사실 판정), 비교·되돌리기
+제품이 바뀌면: ③ 코드 다시 읽기 → 바뀐 곳 제안 → ④에서 수락·거절
+확장: 컨플루언스 게시(저장 형식 + 첨부), Word 내보내기
 ```
 
 ## 저장소 구조
 
 ```
-manual-write-anything/
-├─ CLAUDE.md
-├─ Cargo.toml                 cargo workspace (M0에서 생성)
-├─ crates/
-│  ├─ protocol   이벤트, 작업, 설정 타입 (의존성 최소)
-│  ├─ core       작업 그래프 상태 머신, 예산, 재시도, 실행 기록(SQLite)
-│  ├─ backends   Backend 트레잇 + cli:claude-code / cli:codex / cli:opencode / api:anthropic / api:openai-compat / ollama  (FB)
-│  ├─ source     소스 연결: 로컬 경로 / 원격 미러 / 업로드 → SHA 고정 체크아웃 (FS)
-│  ├─ productmap 메뉴 설정·권한 사전·라우트 파서, 응답 형태 추출, 어댑터 로더 (F1)
-│  ├─ facts      사실 추출, 해시 캐시 (F5)
-│  ├─ manual     블록 모델, 양식 스키마, 편집 연산, 결정적 표 (F4, F7, F9)
-│  ├─ capture    Playwright 사이드카 제어, 세션, 촬영 명세, 가림, 콜아웃 (F2, F3, F6)
-│  ├─ explore    agent-browser 탐색 → Playwright 로케이터 변환 (F6)
-│  ├─ verify     규칙 검사, 검증자 루브릭 (F8)
-│  ├─ export     PDF, Confluence, 코퍼스 (F10)
-│  ├─ tui        대화·검토 화면 (ratatui)
-│  └─ cli        clap 진입점: init / doctor / map / gen / review / export / watch / exec
-├─ sidecar/playwright/        Node 사이드카 (connectOverCDP, getByRole 재생·촬영)
-└─ docs/
+crates/
+  protocol    설정(mwa.toml)·역할·이벤트 타입
+  core        모델 호출 배분(역할 → 백엔드), 사용량 집계
+  backends    공식 CLI(claude 등)를 하위 프로세스로 실행
+  source      코드 소스: 로컬 폴더·Git 클론
+  productmap  메뉴·라우트·API·권한 추출, 어댑터 로더 (제품 지도)
+  capture     Playwright 촬영기 제어: 로그인, 쓰기 차단, 메뉴·장면 촬영, 자격 파일
+  manual      코드 읽기·사실 추출(pipeline), 기존 매뉴얼(reference), 문서(document),
+              코드로 다시 쓰기(rewrite), 출처(provenance), 근거 판정(grounding), 버전
+  host        화면과 엔진 사이의 기능 목록(트레잇)
+  server      HTTP·WebSocket API (`mwa serve`), 화면 내장
+  tui         터미널 화면
+  cli         `mwa` 명령, Host 구현, 컨플루언스 게시
+web/          React 화면: 매뉴얼 현황, 기능 4단계, 편집기(TipTap), 도우미 패널
+sidecar/capture/  Node + Playwright 촬영 스크립트 (바이너리에 내장, 처음 쓸 때 데이터 폴더에 풀림)
+app/          macOS 데스크톱 앱(Tauri, 선택)
 ```
 
-## 브라우저 계층
+## 문서 모델
 
-- 탐색: Vercel agent-browser(접근성 트리 `@ref`, `connect`로 기존 Chrome CDP 연결). 스크린샷을 모델에 보내지 않음.
-- 기록: 고른 `@ref` → 역할·이름·범위로 Playwright 시맨틱 로케이터 변환. 상자 일치 + 후보 1개일 때만 저장.
-- 재생·본 촬영: Playwright 하나(Node 사이드카). chromiumoxide는 쓰지 않음.
-- 공유 스택: 로그인·세션 연장·로그아웃 외 비-GET `/api/*`는 `page.route`로 차단.
+- 문서는 편집기 HTML이며 최상위 블록마다 `data-bid`가 있습니다.
+- `provenance.json`: 블록별 이력(기존 매뉴얼 몇 쪽, 코드로 다시 씀, 제안 수락, 도우미 요청, 사람이 고침)과 버전별 변경 기록.
+- `grounding.json`: 블록별 판정(코드로 확인됨·일부·코드와 다름·근거 없음), 근거 사실, 설명. 글이 바뀌면 다시 확인 대상.
+- 그림은 `data-ref`(기존 매뉴얼 그림 → ②의 선택에 따라 지금 화면·올린 그림·기존 그림), `data-asset`(올린 그림), `data-shot`(촬영)으로 가리키고, 크기는 `data-width`(%).
 
-## 매뉴얼 작업 공간 (생성물, 별도 git 저장소)
+## 역할과 모델 (기본값, 화면 ①의 모델 구성 또는 mwa.toml에서 변경)
 
-```
-manual-workspace/
-├─ mwa.toml                 대상, 소스, 계정 참조, 역할별 백엔드, 예산
-├─ template/schema.yaml      양식 (절 순서, 블록 종류, 문체)
-├─ map/product-map.json      제품 지도
-├─ facts/<feature>.jsonl     사실 (출처: 파일:줄 / 화면 / 실행)
-├─ manual/<feature>.md       본문 + 블록 주석 앵커
-├─ manual/blocks.json        블록 사이드카 (id, 해시, owner gen|human|locked, 근거)
-├─ shots/<feature>/*.yaml|png 촬영 명세, 승인 이미지
-├─ baseline/                 승인 시점 접근성 스냅샷, 픽셀 해시
-└─ .mwa/                    캐시, 실행 기록, 소스 미러 (git 제외)
-```
-
-블록 주석 예: `<!-- blk:user-create-03 owner=gen facts=f81,f82 h=3fa2 -->`
-
-## 역할과 모델 (기본값, mwa.toml로 변경)
-
-| 역할 | 기본 | 병렬 |
+| 역할 | 기본 | 맡는 일 |
 |---|---|---|
-| 대화·양식 추출·편집 | writer (중간) | 단일 |
-| 사실 추출·화면 탐색·캡션 확인 | worker (싼) | 파일/계정별 |
-| 절 작성 | writer | 기능별 |
-| 검증 | verifier (상위, writer와 다른 계열) | 기능 묶음 |
-| 규칙 검사 | 코드 | 전부 |
-
-검증은 결정적 규칙 검사(근거 사실 id, 화면 라벨) 뒤에 상위 모델이 블록별로 판정합니다.
+| worker | haiku | 장면 설명, PDF 쪽 옮기기, 사실 추출 |
+| writer | sonnet | 매뉴얼 쓰기, 촬영 계획·판정, 갱신 제안 |
+| verifier | opus | 근거 확인 |
+| chat | sonnet | 편집기 도우미 |

@@ -19,6 +19,11 @@ pub struct ClaudeCode {
 
 impl ClaudeCode {
     pub fn new(command: String, timeout_secs: u64) -> Self {
+        // Resolve once so a minimal PATH (ssh command, desktop app) still finds the CLI;
+        // if it is nowhere, keep the name and let the spawn error explain.
+        let command = crate::find_command(&command)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or(command);
         Self {
             command,
             timeout: Duration::from_secs(timeout_secs),

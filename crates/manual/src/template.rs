@@ -14,7 +14,12 @@ Then list concrete style rules you observe (sentence ending, how menu paths are 
 emphasised, how screenshots are referenced, table conventions, separators). Write titles exactly as in the \
 example; write purposes and rules in Korean. Ignore content specific to the example's feature.";
 
-pub async fn learn(d: &Dispatcher, example: &str, source: &str) -> Result<Template, ManualError> {
+pub async fn learn(
+    d: &Dispatcher,
+    example: &str,
+    source: &str,
+    pages: &[std::path::PathBuf],
+) -> Result<Template, ManualError> {
     let schema = json!({
         "type": "object",
         "properties": {
@@ -32,8 +37,18 @@ pub async fn learn(d: &Dispatcher, example: &str, source: &str) -> Result<Templa
         .call(
             Role::Writer,
             SYSTEM,
-            &format!("[예시 매뉴얼: {source}]\n\n{example}"),
-            &[],
+            &format!(
+                "[예시 매뉴얼: {source}]{}\n\n{example}",
+                if pages.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " (페이지 이미지 {}장을 함께 보냅니다: 표·흐름도·주의 상자·스크린샷 배치와 캡션 방식을 그대로 규칙으로 적으세요)",
+                        pages.len()
+                    )
+                }
+            ),
+            pages,
             Some(&schema),
         )
         .await?;

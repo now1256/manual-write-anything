@@ -248,10 +248,190 @@ export interface Settings {
   sources: { name: string; path: string; git: string; branch: string }[];
   product: { name: string; adapter: string; frontend: string; backend: string; openapi: string } | null;
   profiles: { name: string; base_url: string; user_id: string; purpose: string }[];
-  capture: { profile: string; domain: string; viewport: [number, number]; scale: number } | null;
+  capture: { profile: string; domain: string; viewport: [number, number]; scale: number; node: string } | null;
   roles: { role: string; backend: string; model: string; uses: string }[];
   backends: string[];
   max_usd_per_run: number;
+  template: string;
+  agents: { backend: string; command: string }[];
+  /** [name, path] of adapters in the user's adapter folder. */
+  known_adapters: [string, string][];
+  /** Add-on: publish to Confluence. */
+  confluence: boolean;
+}
+
+export interface Check {
+  ok: boolean;
+  detail: string;
+}
+
+export interface SetupStep {
+  key: string;
+  label: string;
+  done: boolean;
+  detail: string;
+  /** "settings", "command:<name>" or "". */
+  action: string;
+}
+
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  entries: { name: string; dir: boolean; git: boolean }[];
+}
+
+export interface RefSummary {
+  id: string;
+  title: string;
+  tag: string | null;
+  feature: string | null;
+  ignored: boolean;
+  pages: number;
+  images: number;
+  described: number;
+  source: string;
+  imported_at: number;
+}
+
+export interface RefList {
+  items: RefSummary[];
+  features: { key: string; label: string; group: string | null }[];
+}
+
+export interface Scene {
+  kind: string;
+  screen: string;
+  state: string;
+  capture: boolean;
+  how: string;
+}
+
+export interface RefImage {
+  file: string;
+  page: number;
+  width: number;
+  height: number;
+  heading: string;
+  context: string;
+  caption: string;
+  scene?: Scene;
+}
+
+export interface RefDoc {
+  id: string;
+  title: string;
+  tag: string | null;
+  source: string;
+  feature: string | null;
+  pages: number;
+  imported_at: number;
+  images: RefImage[];
+}
+
+export interface SceneShot {
+  image: string;
+  page: number;
+  heading: string;
+  what: string;
+  /** reproduced | different | failed */
+  status: string;
+  reason_kind?: string;
+  reason?: string;
+  differences: string[];
+  /** What changed in the product's screen itself; the manual's text follows these. */
+  changes?: string[];
+  file?: string;
+  data?: string;
+  /** First plan, then each re-plan. */
+  attempts?: SceneAttempt[];
+  /** Write requests stopped (no demo response). */
+  blocked?: string[];
+  /** Requests answered from demo data. */
+  mocked?: string[];
+  /** Picture a person uploaded for this scene (document asset file). */
+  uploaded?: string;
+  /** Picture chosen for the new manual: current | old | upload (none = automatic). */
+  choice?: string;
+}
+
+export interface SceneAttempt {
+  steps: { text: string; ok: boolean | null; ms: number; error?: string }[];
+  error?: string;
+  fail_file?: string;
+}
+
+export interface SceneShots {
+  feature: string;
+  doc: string;
+  taken_at: number;
+  scenes: SceneShot[];
+}
+
+export const fetchSceneShots = (feature: string) =>
+  getJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}`);
+
+export interface VersionMeta {
+  n: number;
+  created_at: number;
+  sources: { name: string; sha: string; branch: string | null; preview: boolean }[];
+  template: string;
+  blocks: number;
+  images: number;
+  supported: number;
+  partial: number;
+  unsupported: number;
+}
+
+export interface VersionDiff {
+  against: string;
+  added: string[];
+  removed: string[];
+  changed: string[];
+  images_added: number;
+  images_removed: number;
+}
+
+export async function fetchVersions(feature: string): Promise<{ meta: VersionMeta; diff: VersionDiff }[]> {
+  const r = await getJson<{ versions: { meta: VersionMeta; diff: VersionDiff }[] }>(
+    `/api/manual/${encodeURIComponent(feature)}/versions`,
+  );
+  return r?.versions ?? [];
+}
+
+export const fetchVersion = (feature: string, n: number) =>
+  getJson<ManualRun>(`/api/manual/${encodeURIComponent(feature)}/versions/${n}`);
+
+export async function fetchReferences(): Promise<RefList> {
+  return (await getJson<RefList>("/api/references")) ?? { items: [], features: [] };
+}
+
+export const fetchReference = (id: string) => getJson<RefDoc>(`/api/references/${encodeURIComponent(id)}`);
+
+export const importReferences = (paths: string[]) => postJson<{ lines: string[] }>("/api/references/import", { paths });
+
+export const setReference = (id: string, feature: string | null, ignored: boolean) =>
+  postJson<{ ok: boolean }>(`/api/references/${encodeURIComponent(id)}`, { feature, ignored });
+
+export const refFileUrl = (id: string, file: string) => `/api/references/${encodeURIComponent(id)}/file/${file}`;
+export const refPageUrl = (id: string, page: number) => `/api/references/${encodeURIComponent(id)}/page/${page}`;
+
+/** Read-only probe of one settings value (folder, git, adapter, openapi, site, file, command). */
+export const checkField = (kind: string, value: string, extra = "") =>
+  postJson<Check>("/api/check", { kind, value, extra });
+
+export async function fetchSetup(): Promise<SetupStep[]> {
+  const r = await getJson<{ steps: SetupStep[] }>("/api/setup");
+  return r?.steps ?? [];
+}
+
+export async function browseFolder(path: string | null, ext = ""): Promise<FolderListing> {
+  const q = new URLSearchParams();
+  if (path) q.set("path", path);
+  if (ext) q.set("ext", ext);
+  const res = await fetch(`/api/fs?${q}`);
+  const data = (await res.json()) as FolderListing & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
 }
 
 export async function fetchSettings(): Promise<Settings> {
@@ -340,3 +520,206 @@ export class Channel {
     this.ws?.close();
   }
 }
+
+/** Editable manual document (D-032). */
+export interface ManualDoc {
+  feature: string;
+  title: string;
+  /** `pdf:<reference id>` or `generated`. */
+  origin: string;
+  reference: string | null;
+  html: string;
+  version: number;
+  updated_at: number;
+  /** The version that is the old manual as imported. */
+  base?: number | null;
+}
+
+export const fetchDoc = (feature: string) => getJson<ManualDoc>(`/api/docs/${encodeURIComponent(feature)}`);
+
+/** Why some blocks changed (accepted proposal, applied request), saved with the document. */
+export interface DocChange {
+  bids: string[];
+  kind: string;
+  summary: string;
+  request?: string | null;
+  facts: string[];
+  inherit: string[];
+}
+
+/** `base`: the version the edits started from; the engine refuses if the document moved on. */
+export async function saveDoc(feature: string, html: string, changes: DocChange[] = [], base?: number): Promise<ManualDoc> {
+  const res = await fetch(`/api/docs/${encodeURIComponent(feature)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ html, changes, base }),
+  });
+  const data = (await res.json().catch(() => ({}))) as ManualDoc & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+/** Uploads a picture for a document; returns the stored file name. */
+export async function uploadDocAsset(feature: string, file: File): Promise<string> {
+  const res = await fetch(`/api/docs/${encodeURIComponent(feature)}/assets?name=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    body: file,
+  });
+  const data = (await res.json().catch(() => ({}))) as { file?: string; error?: string };
+  if (!res.ok || !data.file) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data.file;
+}
+
+export const docAssetUrl = (feature: string, file: string) =>
+  `/api/docs/${encodeURIComponent(feature)}/assets/${encodeURIComponent(file)}`;
+
+export const fetchDocVersions = async (feature: string) =>
+  (await getJson<{ version: number; updated_at: number }[]>(`/api/docs/${encodeURIComponent(feature)}/versions`)) ?? [];
+export const fetchDocVersion = (feature: string, n: number) =>
+  getJson<ManualDoc>(`/api/docs/${encodeURIComponent(feature)}/versions/${n}`);
+
+export interface Proposal {
+  id: string;
+  /** replace | insert_after */
+  action: string;
+  block: number;
+  before: string;
+  bid?: string;
+  html: string;
+  reason: string;
+  facts: string[];
+}
+
+export const fetchProposals = async (feature: string) =>
+  (await getJson<{ version: number; items: Proposal[] }>(`/api/docs/${encodeURIComponent(feature)}/proposals`)) ?? { version: 0, items: [] };
+
+export async function resolveProposal(feature: string, id: string): Promise<void> {
+  await fetch(`/api/docs/${encodeURIComponent(feature)}/proposals/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** Uploads a picture standing in for one old-manual scene (or removes it with `null`). */
+export async function setSceneUpload(feature: string, image: string, file: File | null): Promise<SceneShots> {
+  const q = `image=${encodeURIComponent(image)}${file ? `&name=${encodeURIComponent(file.name)}` : ""}`;
+  const res = await fetch(`/api/references/shots/${encodeURIComponent(feature)}/upload?${q}`, {
+    method: file ? "POST" : "DELETE",
+    body: file ?? undefined,
+  });
+  const data = (await res.json().catch(() => ({}))) as SceneShots & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export const setSceneChoice = (feature: string, image: string, choice: string | null) =>
+  postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/choice`, { image, choice });
+
+export const linkReference = (feature: string, id: string) => postJson<{ ok: boolean }>("/api/references/link", { feature, id });
+
+/** Uploads a PDF to the engine's project and links it to the feature. */
+export async function uploadReference(feature: string, file: File): Promise<RefDoc> {
+  const res = await fetch(`/api/references/upload?feature=${encodeURIComponent(feature)}&name=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    body: file,
+  });
+  const data = (await res.json().catch(() => ({}))) as RefDoc & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export const restoreDoc = (feature: string, n: number) =>
+  postJson<ManualDoc>(`/api/docs/${encodeURIComponent(feature)}/restore/${n}`, {});
+
+/** The editor's right-click helper: ask | polish | simpler | shorter | rewrite. */
+export interface AssistEdit {
+  /** Consecutive blocks (data-bid) replaced by `html`; empty = insert after `after`. */
+  replace: string[];
+  after: string;
+  html: string;
+}
+
+export interface AssistReply {
+  answer: string;
+  edits: AssistEdit[];
+  facts: string[];
+}
+
+/** The editor's side-panel helper: sees the whole manual, starts from `focus` (block ids in view). */
+export const assist = (feature: string, body: { request: string; html: string; focus: string[]; history: { who: string; text: string }[] }) =>
+  postJson<AssistReply>(`/api/docs/${encodeURIComponent(feature)}/assist`, body);
+
+export interface ProvEntry {
+  kind: string;
+  version: number;
+  at: number;
+  page?: number;
+  facts?: string[];
+  request?: string;
+  summary: string;
+}
+
+export interface Provenance {
+  blocks: Record<string, ProvEntry[]>;
+  log: { version: number; at: number; items: { bid: string; kind: string; summary: string }[] }[];
+}
+
+export const fetchProvenance = async (feature: string) =>
+  (await getJson<Provenance>(`/api/docs/${encodeURIComponent(feature)}/provenance`)) ?? { blocks: {}, log: [] };
+
+/** Why a block says what it says (last "근거 확인"). */
+export interface Ground {
+  /** supported | partial | contradicted | unsupported | no_claim */
+  verdict: string;
+  facts: string[];
+  why: string;
+  /** Block text when checked. */
+  text: string;
+}
+
+export interface Grounding {
+  version: number;
+  at: number;
+  blocks: Record<string, Ground>;
+}
+
+export const fetchGrounding = async (feature: string) =>
+  (await getJson<Grounding>(`/api/docs/${encodeURIComponent(feature)}/grounding`)) ?? { version: 0, at: 0, blocks: {} };
+
+export interface ConfluenceStatus {
+  /** The add-on is switched on in settings. */
+  enabled?: boolean;
+  configured: boolean;
+  base_url?: string | null;
+  email?: string | null;
+  space?: string | null;
+  parent?: string | null;
+  has_token?: boolean;
+  published?: { page_id: string; url: string; title: string; version: number; doc_version: number; at: number; path?: string[] } | null;
+  /** Names of the configured place (from the last check). */
+  target?: { space_name: string; parent_title: string; parent_url: string } | null;
+}
+
+export const fetchConfluence = async (feature: string) =>
+  (await getJson<ConfluenceStatus>(`/api/docs/${encodeURIComponent(feature)}/confluence`)) ?? { configured: false };
+
+export const setupConfluence = (body: { page_url: string; email: string; token: string }) =>
+  postJson<{ found: string }>("/api/confluence/setup", body);
+
+export const publishConfluence = (
+  feature: string,
+  body: { title: string; storage: string; images: { name: string; url: string }[]; adopt: boolean; group: string | null },
+) => postJson<NonNullable<ConfluenceStatus["published"]>>(`/api/docs/${encodeURIComponent(feature)}/confluence`, body);
+
+/** Where one feature's manual stands (home screen). */
+export interface ManualStatus {
+  key: string;
+  label: string;
+  group: string;
+  reference: { title: string; pictures: number; described: number } | null;
+  scenes: { total: number; reproduced: number; different: number; failed: number; uploaded: number } | null;
+  doc: { version: number; updated_at: number; origin: string } | null;
+  grounding: { at: number; version: number; supported: number; partial: number; contradicted: number; unsupported: number; stale: boolean } | null;
+  code: { read_at: number; facts: number; changed: boolean | null } | null;
+  published: { url: string; version: number; doc_version: number } | null;
+}
+
+export const fetchManuals = async () =>
+  (await getJson<{ features: ManualStatus[]; publish: boolean }>("/api/manuals")) ?? { features: [], publish: false };

@@ -47,6 +47,51 @@ pub fn dimensions(p: &Path) -> Option<(u32, u32)> {
     image::image_dimensions(p).ok()
 }
 
+/// Cuts the empty rows off the bottom of a picture (a drawer taller than its content), keeping
+/// a margin. The background is the bottom row's most common colour; a row is empty when nearly
+/// all of it (borders and the page beside a drawer aside) is that colour. Returns whether the
+/// picture changed.
+pub fn trim_bottom(path: &Path, margin: u32) -> Result<bool, image::ImageError> {
+    let img = image::open(path)?.to_rgba8();
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 {
+        return Ok(false);
+    }
+    let mut counts: std::collections::HashMap<[u8; 4], u32> = std::collections::HashMap::new();
+    for x in 0..w {
+        *counts.entry(img.get_pixel(x, h - 1).0).or_default() += 1;
+    }
+    let bg = counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(c, _)| c)
+        .unwrap_or([255; 4]);
+    let empty = |y: u32| {
+        let same = (0..w)
+            .filter(|&x| {
+                img.get_pixel(x, y)
+                    .0
+                    .iter()
+                    .zip(bg)
+                    .all(|(a, b)| a.abs_diff(b) <= 6)
+            })
+            .count();
+        same as f64 >= f64::from(w) * 0.97
+    };
+    let mut last = h;
+    while last > 0 && empty(last - 1) {
+        last -= 1;
+    }
+    let keep = (last + margin).min(h);
+    if last == 0 || keep >= h {
+        return Ok(false);
+    }
+    image::imageops::crop_imm(&img, 0, 0, w, keep)
+        .to_image()
+        .save(path)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,5 +121,21 @@ mod tests {
             1.0
         );
         assert_eq!(dimensions(&dir.path().join("c.png")), Some((5, 5)));
+    }
+
+    #[test]
+    fn trims_empty_bottom() {
+        let dir = std::env::temp_dir().join(format!("mwa-trim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.png");
+        let mut img = image::RgbaImage::from_pixel(100, 300, image::Rgba([255, 255, 255, 255]));
+        for x in 10..90 {
+            img.put_pixel(x, 50, image::Rgba([0, 0, 0, 255]));
+        }
+        img.save(&p).unwrap();
+        assert!(super::trim_bottom(&p, 20).unwrap());
+        assert_eq!(image::open(&p).unwrap().height(), 71);
+        assert!(!super::trim_bottom(&p, 20).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

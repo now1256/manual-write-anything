@@ -80,6 +80,12 @@ pub struct JobShot {
     pub steps: Vec<Step>,
     /// `page` (viewport), `full` (whole page) or `dialog` (the open dialog only).
     pub capture: String,
+    /// Cut the picture to the smallest element holding all these texts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub region: Vec<String>,
+    /// Widen the cut to this width / height ratio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<f64>,
     /// Return the accessibility snapshot of the final screen.
     pub aria: bool,
 }
@@ -105,6 +111,21 @@ pub struct Step {
     /// Value for `fill`/`select`.
     #[serde(default)]
     pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepLog {
+    pub ok: bool,
+    pub ms: u64,
+    /// Plain-language reason when the step failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiSample {
+    pub path: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -140,6 +161,18 @@ pub struct ShotEvent {
     /// Index of the step that failed.
     #[serde(default)]
     pub failed_step: Option<usize>,
+    /// One entry per executed step (a failed step is the last one).
+    #[serde(default)]
+    pub steps_log: Vec<StepLog>,
+    /// Screenshot taken when a step failed.
+    #[serde(default)]
+    pub fail_shot: Option<String>,
+    /// The `region` texts were not found together; the picture is uncut.
+    #[serde(default)]
+    pub region_missed: bool,
+    /// GET `/api/*` JSON bodies seen while probing (truncated).
+    #[serde(default)]
+    pub api_data: Vec<ApiSample>,
     #[serde(default)]
     pub ms: u64,
 }
@@ -158,13 +191,55 @@ pub enum ShootError {
     LowMemory { available: u64, limit: u64 },
 }
 
-/// Default sidecar script: `$MWA_SIDECAR` or the repository copy next to this crate.
+const SCRIPT: &str = include_str!("../../../sidecar/capture/index.mjs");
+const PACKAGE: &str = include_str!("../../../sidecar/capture/package.json");
+
+/// Default sidecar script: `$MWA_SIDECAR`, else the repository copy (development), else the copy
+/// built into this binary, unpacked into mwa's data folder (`<data>/capture/`) so an installed
+/// `mwa` works on any computer. Its Playwright package is installed there by "브라우저 설치".
 pub fn default_script() -> PathBuf {
-    std::env::var_os("MWA_SIDECAR")
+    if let Some(p) = std::env::var_os("MWA_SIDECAR") {
+        return PathBuf::from(p);
+    }
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/capture/index.mjs");
+    if repo.is_file() {
+        return repo;
+    }
+    unpack(&data_dir().join("capture"))
+}
+
+/// Writes the built-in script and its package.json into `dir` (only when they differ, so an
+/// upgraded mwa refreshes them) and returns the script path.
+fn unpack(dir: &Path) -> PathBuf {
+    let stale = |p: &Path, want: &str| std::fs::read_to_string(p).map_or(true, |t| t != want);
+    let _ = std::fs::create_dir_all(dir);
+    let script = dir.join("index.mjs");
+    if stale(&script, SCRIPT) {
+        let _ = std::fs::write(&script, SCRIPT);
+    }
+    let package = dir.join("package.json");
+    if stale(&package, PACKAGE) {
+        let _ = std::fs::write(&package, PACKAGE);
+    }
+    script
+}
+
+/// mwa's data folder: `$MWA_HOME`, else `~/Library/Application Support/mwa` (macOS), else
+/// `$XDG_DATA_HOME/mwa` or `~/.local/share/mwa`.
+pub fn data_dir() -> PathBuf {
+    if let Some(p) = std::env::var_os("MWA_HOME") {
+        return PathBuf::from(p);
+    }
+    let home = std::env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/capture/index.mjs")
-        })
+        .unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        return home.join("Library/Application Support/mwa");
+    }
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"))
+        .join("mwa")
 }
 
 pub async fn run_sidecar(
@@ -247,6 +322,25 @@ pub async fn run_sidecar(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_script_unpacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = unpack(&dir.path().join("capture"));
+        assert_eq!(std::fs::read_to_string(&script).unwrap(), SCRIPT);
+        assert!(
+            std::fs::read_to_string(dir.path().join("capture/package.json"))
+                .unwrap()
+                .contains("playwright")
+        );
+        std::fs::write(&script, "old").unwrap();
+        unpack(&dir.path().join("capture"));
+        assert_eq!(
+            std::fs::read_to_string(&script).unwrap(),
+            SCRIPT,
+            "refreshed after an upgrade"
+        );
+    }
 
     fn job() -> Job {
         Job {
