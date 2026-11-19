@@ -883,6 +883,64 @@ fn save_proposals(ws: &Path, feature: &str, p: &Proposals) -> Result<(), ManualE
 }
 
 /// Removes a proposal once it was accepted or rejected.
+/// Accepts every open proposal (자동 작업 "게시까지"), as a person pressing 수락 would: one new
+/// version, each change with its reason. None when there was nothing to accept.
+pub fn accept_proposals(ws: &Path, feature: &str) -> Result<Option<Doc>, ManualError> {
+    let doc = load(ws, feature)
+        .ok_or_else(|| ManualError::Invalid(format!("매뉴얼 문서가 없습니다: {feature}")))?;
+    let open = load_proposals(ws, feature);
+    if open.items.is_empty() {
+        return Ok(None);
+    }
+    let mut all = blocks(&doc.html);
+    let mut changes = Vec::new();
+    for (n, p) in open.items.iter().enumerate() {
+        let at = p
+            .bid
+            .as_ref()
+            .and_then(|b| {
+                all.iter()
+                    .position(|x| crate::provenance::bid_of(x).as_ref() == Some(b))
+            })
+            .or_else(|| all.iter().position(|x| text_of(x) == p.before));
+        let Some(i) = at else {
+            continue;
+        };
+        let (html, ids) =
+            crate::provenance::with_bids(&p.html, &format!("a{}-{n}-", doc.version + 1));
+        let new = blocks(&html);
+        let replace = p.action == "replace";
+        let old = crate::provenance::bid_of(&all[i]);
+        if replace {
+            all.splice(i..=i, new);
+        } else {
+            all.splice(i + 1..i + 1, new);
+        }
+        changes.push(crate::provenance::Change {
+            bids: ids,
+            kind: "proposal".into(),
+            summary: p.reason.clone(),
+            request: None,
+            facts: p.facts.clone(),
+            inherit: if replace {
+                old.into_iter().collect()
+            } else {
+                Vec::new()
+            },
+        });
+    }
+    let doc = save(ws, feature, &all.join("\n"), &changes)?;
+    save_proposals(
+        ws,
+        feature,
+        &Proposals {
+            version: doc.version,
+            items: Vec::new(),
+        },
+    )?;
+    Ok(Some(doc))
+}
+
 pub fn resolve_proposal(ws: &Path, feature: &str, id: &str) -> Result<Proposals, ManualError> {
     let mut p = load_proposals(ws, feature);
     p.items.retain(|x| x.id != id);

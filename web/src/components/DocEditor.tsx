@@ -19,7 +19,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { Placeholder } from "@tiptap/extensions";
 import { Details, DetailsContent, DetailsSummary } from "@tiptap/extension-details";
-import { pickPicture } from "../pictures";
+import { pictureResolver, type Pic } from "../pictures";
 import { useContextMenu } from "./EditorAssist";
 import { BlockIds, OutlineLook, withBids } from "./blockIds";
 import DocSidePanel, { focusOf, type PanelTab } from "./DocSidePanel";
@@ -28,7 +28,6 @@ import { joinTables, pairBelowCursor, splitTables, type SplitPair } from "./tabl
 import ConfluencePublish from "./ConfluencePublish";
 import { PanelBubble, SelectionBubble, SlashMenu, TableBubble, Toolbar } from "./EditorChrome";
 import {
-  docAssetUrl,
   fetchDoc,
   fetchDocVersion,
   fetchDocVersions,
@@ -43,9 +42,7 @@ import {
   fetchReference,
   fetchReferences,
   fetchSceneShots,
-  refFileUrl,
   saveDoc,
-  shotUrl,
   uploadDocAsset,
   type ManualDoc,
   type Proposal,
@@ -57,13 +54,6 @@ import {
 } from "../api";
 
 /** Where a picture comes from, resolved at render time (D-032). */
-interface Pic {
-  src: string | null;
-  kind: "user" | "ok" | "diff" | "chosen" | "old" | "none";
-  label: string;
-  /** The old manual's picture, for comparison. */
-  old: string | null;
-}
 
 interface Ctx {
   resolve: (ref: string | null, asset: string | null, shot: string | null) => Pic;
@@ -441,23 +431,7 @@ export default function DocEditor({ featureKey, version, focus, onGotoReference,
   const uploadScene = async (ref: string, f: File) => setShots(await setSceneUpload(featureKey, ref, f));
   const reference = doc?.reference ?? refId;
 
-  const resolve: Ctx["resolve"] = (ref, asset, shot) => {
-    const old = ref && reference ? refFileUrl(reference, ref) : null;
-    if (asset) return { src: docAssetUrl(featureKey, asset), kind: "user", label: "올린 그림", old };
-    if (ref) {
-      const s = shots?.scenes.find((x) => x.image === ref);
-      const p = pickPicture(s, noCapture.has(ref));
-      const src =
-        p.source === "upload" && s?.uploaded
-          ? docAssetUrl(featureKey, s.uploaded)
-          : p.source === "current" && s?.file
-            ? shotUrl(s.file, String(shots!.taken_at))
-            : old;
-      return { src, kind: p.kind as Pic["kind"], label: p.label, old: p.source === "old" ? null : old };
-    }
-    if (shot) return { src: shotUrl(shot, null), kind: "ok", label: "현재 화면", old: null };
-    return { src: null, kind: "none", label: "그림 없음", old: null };
-  };
+  const resolve: Ctx["resolve"] = pictureResolver(featureKey, reference, shots, noCapture);
 
   /** Picture slots of the saved document still without a picture. */
   const slotsLeft = useMemo(

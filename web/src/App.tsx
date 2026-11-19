@@ -109,6 +109,7 @@ export default function App() {
   const LABELS: Record<string, string> = {
     map: "제품 지도 생성",
     adapter: "코드 읽고 제품 파악",
+    auto: "자동 작업",
     doctor: "점검",
     shot: "촬영",
     gen: "코드 읽기",

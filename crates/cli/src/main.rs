@@ -9,6 +9,7 @@ use mwa_source::{Snapshot, snapshot_local};
 use serde_json::{Value, json};
 
 mod adapter_gen;
+mod automation;
 mod confluence;
 mod projects;
 mod settings;
@@ -524,6 +525,7 @@ async fn serve(
     let hub = mwa_server::Hub::new(host, Some(std::sync::Arc::new(registry)));
     let listener = mwa_server::bind(addr).await?;
     let port = listener.local_addr()?.port();
+    let _ = automation::SERVE_PORT.set(port);
     if addr.ip().is_unspecified() {
         // The address others type: the one this machine uses on its network.
         let ip = std::net::UdpSocket::bind("0.0.0.0:0")

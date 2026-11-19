@@ -857,6 +857,26 @@ impl Host for CliHost {
             .map_err(|e| format!("{e:#}"))
     }
 
+    fn automation(&self) -> serde_json::Value {
+        crate::automation::view(&self.ws)
+    }
+
+    fn save_automation(&self, rules: serde_json::Value) -> Result<serde_json::Value, String> {
+        let rules = serde_json::from_value(rules).map_err(|e| format!("규칙 형식: {e}"))?;
+        crate::automation::save(&self.ws, rules).map_err(|e| format!("{e:#}"))?;
+        Ok(crate::automation::view(&self.ws))
+    }
+
+    async fn run_automation(&self, id: &str, progress: OnDelta) -> Result<Vec<String>, String> {
+        crate::automation::run(self, &self.ws, id, Arc::from(progress))
+            .await
+            .map_err(|e| format!("{e:#}"))
+    }
+
+    async fn automation_tick(&self) {
+        crate::automation::tick(self, &self.ws).await;
+    }
+
     async fn make_adapter(&self, progress: OnDelta) -> Result<Vec<String>, String> {
         crate::adapter_gen::make(&self.ws, |l| progress(&l))
             .await

@@ -169,6 +169,22 @@ pub trait Host: Send + Sync + 'static {
         drop(progress);
         Err("이 화면에서는 기존 매뉴얼 장면 촬영을 지원하지 않습니다".into())
     }
+    /// 자동 작업 rules with their next runs, and the latest runs (D-050).
+    fn automation(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+    fn save_automation(&self, rules: serde_json::Value) -> Result<serde_json::Value, String> {
+        let _ = rules;
+        Err("이 화면에서는 자동 작업을 지원하지 않습니다".into())
+    }
+    /// Runs one rule now.
+    async fn run_automation(&self, id: &str, progress: OnDelta) -> Result<Vec<String>, String> {
+        let _ = id;
+        drop(progress);
+        Err("이 화면에서는 자동 작업을 지원하지 않습니다".into())
+    }
+    /// Runs the rules that are due (once a minute while serving).
+    async fn automation_tick(&self) {}
     /// Writes the product adapter from the code and builds the product map (D-049).
     async fn make_adapter(&self, progress: OnDelta) -> Result<Vec<String>, String> {
         drop(progress);

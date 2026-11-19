@@ -113,6 +113,29 @@ fn handle(msg: ClientMsg, host: &Arc<dyn Host>, tx: &mpsc::UnboundedSender<Serve
                             }
                         }
                     },
+                    "auto" => match arg {
+                        None => ServerMsg::Error {
+                            id,
+                            message: "어떤 자동 작업을 돌릴지 정해지지 않았습니다".into(),
+                        },
+                        Some(rule) => {
+                            let progress_tx = tx.clone();
+                            let progress = Box::new(move |t: &str| {
+                                let _ = progress_tx.send(ServerMsg::Progress {
+                                    id,
+                                    text: t.to_string(),
+                                });
+                            });
+                            match host.run_automation(&rule, progress).await {
+                                Ok(lines) => ServerMsg::Lines {
+                                    id,
+                                    title: "자동 작업".into(),
+                                    lines,
+                                },
+                                Err(message) => ServerMsg::Error { id, message },
+                            }
+                        }
+                    },
                     "adapter" => {
                         let progress_tx = tx.clone();
                         let progress = Box::new(move |t: &str| {

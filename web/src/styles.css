@@ -754,3 +754,30 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .fig-fail { margin-top: 6px; color: var(--err); font-size: 12px; }
 .screen-changes { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 4px; }
 .screen-changes ul { margin: 4px 0 0; }
+
+/* 자동 작업 */
+.auto { margin-top: 24px; display: flex; flex-direction: column; gap: 10px; }
+.auto-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.auto-head h2 { margin: 0; font-size: 18px; }
+.auto-rule { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+.auto-rule.off { opacity: .65; }
+.auto-line { display: flex; gap: 8px; align-items: center; }
+.auto-toggle { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--panel-2); color: var(--muted); cursor: pointer; }
+.auto-toggle.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.auto-name { flex: 1; max-width: 280px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg); font-weight: 600; }
+.auto-name:hover, .auto-name:focus { border-color: var(--line); background: var(--panel-2); }
+.auto-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; }
+.auto-sentence select, .auto-sentence input, .auto-features select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--fg); }
+.auto-sentence .auto-hours { width: 64px; }
+.auto-check { display: inline-flex; align-items: center; gap: 4px; }
+.auto-features { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.auto-features .chip { display: inline-flex; gap: 4px; align-items: center; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: 13px; }
+.auto-foot { display: flex; align-items: center; gap: 6px; }
+.warn-text { color: var(--warn, #b7791f); }
+.auto-runs-title { margin: 8px 0 0; font-size: 15px; }
+.auto-runs { width: 100%; border-collapse: collapse; font-size: 13px; }
+.auto-runs th, .auto-runs td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.auto-runs th { color: var(--muted); font-weight: 600; }
+.auto-runs tr.failed td { color: var(--err); }
+.auto-runs summary { cursor: pointer; }
+.auto-runs ul { margin: 4px 0 0; padding-left: 18px; color: var(--fg); }

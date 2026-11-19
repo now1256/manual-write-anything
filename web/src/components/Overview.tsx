@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AutomationPanel from "./AutomationPanel";
 import { fetchManuals, type ManualStatus, type ProductMap, type ShotsManifest } from "../api";
 
 const pct = (a: number, b: number) => (b ? `${((100 * a) / b).toFixed(1)}%` : "-");
@@ -6,7 +7,7 @@ const pct = (a: number, b: number) => (b ? `${((100 * a) / b).toFixed(1)}%` : "-
 interface Props {
   map: ProductMap | null;
   shots: ShotsManifest | null;
-  onCommand: (n: string) => void;
+  onCommand: (n: string, arg?: string) => void;
   onOpen: (feature: string) => void;
   /** Bumped after commands finish. */
   version: number;
@@ -42,6 +43,11 @@ export default function Overview({ map, shots, onCommand, onOpen, version }: Pro
   return (
     <div className="overview">
       <Manuals onOpen={onOpen} version={version} />
+      <AutomationPanel
+        features={map.features.map((f) => ({ key: f.key, label: f.label }))}
+        version={version}
+        onCommand={onCommand}
+      />
       <details className="map-details">
         <summary>제품 지도 (코드 분석 결과) — 메뉴 {c.menus} · 화면 {c.screens} · 권한 {map.permissions.length}</summary>
       <div className="overview-head">

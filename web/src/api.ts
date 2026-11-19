@@ -723,3 +723,52 @@ export interface ManualStatus {
 
 export const fetchManuals = async () =>
   (await getJson<{ features: ManualStatus[]; publish: boolean }>("/api/manuals")) ?? { features: [], publish: false };
+
+/** 자동 작업: a rule keeping manuals up to date on a schedule (D-050). */
+export interface AutoRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  every: "daily" | "weekly" | "hours";
+  at: string;
+  weekday: number;
+  hours: number;
+  scope: "changed" | "features";
+  features: string[];
+  action: "propose" | "rewrite";
+  reshoot: boolean;
+  until: "review" | "publish";
+  last_run?: number | null;
+  created_at?: number;
+  /** Filled by the engine. */
+  next_run?: number | null;
+}
+
+export interface AutoRun {
+  rule: string;
+  name: string;
+  started: number;
+  finished?: number | null;
+  status: "running" | "ok" | "none" | "failed";
+  features: string[];
+  lines: string[];
+}
+
+export interface Automation {
+  rules: AutoRule[];
+  runs: AutoRun[];
+  running: boolean;
+}
+
+export const fetchAutomation = async () =>
+  (await getJson<Automation>("/api/automation")) ?? { rules: [], runs: [], running: false };
+
+export async function saveAutomation(rules: AutoRule[]): Promise<Automation> {
+  const res = await fetch("/api/automation", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ rules: rules.map(({ next_run: _, ...r }) => r) }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

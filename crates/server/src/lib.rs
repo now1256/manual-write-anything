@@ -115,6 +115,7 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
             axum::routing::post(confluence_setup),
         )
         .route("/api/manuals", get(manuals_status))
+        .route("/api/automation", get(automation).put(save_automation))
         .route(
             "/api/docs/{feature}/restore/{n}",
             axum::routing::post(restore_document),
@@ -175,6 +176,14 @@ pub async fn serve_listener(
     hub: Arc<Hub>,
     web_dir: Option<PathBuf>,
 ) -> Result<(), ServeError> {
+    // 자동 작업: due rules run once a minute, in whichever project is open.
+    let ticking = hub.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            ticking.host().automation_tick().await;
+        }
+    });
     axum::serve(listener, router_with(hub, web_dir)).await?;
     Ok(())
 }
@@ -524,6 +533,20 @@ async fn document_version(
 
 async fn manuals_status(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
     Json(hub.host().manuals_status())
+}
+
+async fn automation(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
+    Json(hub.host().automation())
+}
+
+async fn save_automation(
+    State(hub): State<Arc<Hub>>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    match hub.host().save_automation(b) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
 }
 
 async fn confluence_status(
