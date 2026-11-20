@@ -8,6 +8,7 @@ const STEPS: { step: string; roles: string[]; what: string; example?: string }[]
   { step: "② 그림 대조", roles: ["writer"], what: "새로 찍은 그림이 기존 그림과 같은 장면인지 판정합니다", example: "장면 12개 촬영+대조 $0.15~0.9" },
   { step: "③ 기존 매뉴얼 옮기기", roles: ["worker"], what: "PDF 쪽마다 글·표·그림 위치를 편집 문서로 옮깁니다", example: "10쪽 $0.01" },
   { step: "③ 코드 다시 읽기", roles: ["worker"], what: "코드에서 사실 뽑기 (인용 줄 검사)" },
+  { step: "④ 근거 확인", roles: ["verifier"], what: "문단마다 코드 사실과 대조합니다. 교차 검증을 고르면 두 모델이 따로 판정하고, 의견이 갈린 문단만 ⚖로 표시합니다 (검증 비용 약 2배)" },
   { step: "③ 바뀐 곳 제안", roles: ["writer"], what: "문서와 코드 사실을 비교해 고칠 곳을 제안합니다", example: "제안 6개 $0.08" },
   { step: "④ 우클릭 도우미", roles: ["chat"], what: "묻기·다듬기·고쳐 쓰기" },
 ];
@@ -41,7 +42,10 @@ export default function ModelPanel() {
   if (!settings) return msg ? <p className="flash err">{msg.text}</p> : <p className="muted">모델 구성을 불러오는 중…</p>;
 
   const modelOf = (role: string) => roles.find((r) => r.role === role)?.model ?? "";
-  const dirty = roles.some((r) => settings.roles.find((x) => x.role === r.role)?.model !== r.model);
+  const dirty = roles.some((r) => {
+    const was = settings.roles.find((x) => x.role === r.role);
+    return was?.model !== r.model || (was?.cross_model ?? "") !== (r.cross_model ?? "");
+  });
   const save = async () => {
     try {
       await saveSettings({ ...settings, roles });
@@ -81,6 +85,17 @@ export default function ModelPanel() {
                   ))}
                   {!MODELS.some((m) => m.name === r.model) && <option value={r.model}>{r.model}</option>}
                 </select>
+                {r.role === "verifier" && (
+                  <label className="cross-pick small">
+                    교차 검증
+                    <select value={r.cross_model ?? ""} onChange={(e) => setRoles(roles.map((x) => (x.role === r.role ? { ...x, cross_model: e.target.value } : x)))}>
+                      <option value="">안 함</option>
+                      {MODELS.filter((m) => m.name !== r.model).map((m) => (
+                        <option key={m.name} value={m.name}>{m.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
               </td>
               <td className="small">
                 {STEPS.filter((s) => s.roles.includes(r.role)).map((s) => (

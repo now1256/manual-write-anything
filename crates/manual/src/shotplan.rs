@@ -89,7 +89,11 @@ Inside a dialog never press buttons that commit (저장, 생성, 등록, 삭제,
 confirmation dialog, press the page button that opens it and stop there. For a wizard step N, fill required \
 fields with realistic Korean values and press 다음 to advance. End every plan with a `wait` step for the element \
 that proves the target screen is visible (e.g. role dialog, or a heading). capture: `dialog` for dialogs, \
-`page` for a screen, `full` only when the target is below the fold of a long page.";
+`page` for a screen, `full` only when the target is below the fold of a long page. A manual picture should \
+show real values: when a plan opens one row (detail, edit, delete, a tab), pick the row whose columns are the \
+most filled in the snapshot and the API samples (no '-', no blanks), and for a list prefer what shows many \
+rows. Show an empty list, a blank form or '-' values only when the scene is about that state; an edit form \
+keeps the record's saved values.";
 
 fn step_schema() -> Value {
     json!({
@@ -267,7 +271,11 @@ pub struct Infeasible {
 }
 
 const SCENE_RULES: &str = " You are also given, for each todo, a picture of that screen from an older \
-manual. Reproduce the same screen and state in the current product. If the state cannot be reached with \
+manual. Reproduce the same screen and the same part of it in the current product: the same page, dialog, \
+drawer, tab or confirmation, cut to the same area. The content need not match the old picture (it is a \
+manual, not a copy): never type the old picture's example text into fields, open forms with the record's \
+own values, and a dialog shown for several selected rows needs only one selected; use the current data's \
+fullest records. If the state cannot be reached with \
 this tool, set feasible false instead of guessing: needs_write (it needs a change the shared server must \
 really perform; requests listed as answered by demo data are fine to send), realtime (live streams or \
 progress), account (another user, role or permission), not_found (the screen or control no longer exists \
@@ -404,11 +412,14 @@ pub struct Verdict {
 
 const JUDGE_SYSTEM: &str = "You compare two screenshots of a web product for a Korean user manual. Picture 1 \
 is from an older manual (the target); picture 2 was just taken from the current product with demo data. \
-Data values (names, numbers, dates) will differ and do not matter. Decide: same (same screen and the same \
-state: same dialog or panel open, same inputs filled, same messages or selections visible), different (same \
-screen but the state differs or the UI has changed: missing message, other tab, added or removed columns or \
-buttons), wrong (a different screen or nothing useful). List the differences that matter in Korean, most \
-important first; leave the list empty for same. Separately, list in changes only what changed in the \
+Data values (names, numbers, dates) will differ and do not matter. Decide: same (the same screen with the \
+same part open: the same page, dialog, drawer, tab or confirmation; values, typed text, counts and how many \
+rows are selected do not matter), different (the same screen but another part open, or the UI has \
+changed: another tab, added or removed columns or buttons, a different message), wrong (a different \
+screen or nothing useful). List the differences that matter in Korean, most \
+important first; leave the list empty for same. A picture whose table cells or fields are mostly \
+empty ('-', blank, no rows) where the old picture has values is different: list '값이 비어 있음' and where \
+among the differences (not among the changes: it is data, not the product). Separately, list in changes only what changed in the \
 product's screen itself, which the manual's text must follow: a column, card, button, field, option, tab, \
 message or label added, removed or renamed, a control that is now disabled or read-only, a different \
 layout of the same parts. Not data values, not how the picture is cut, not a state that was not reached. \

@@ -22,6 +22,18 @@ pub struct Ground {
     pub why: String,
     /// The block's text when checked; a different text now means the check is stale.
     pub text: String,
+    /// The cross-check model's view when it was asked (D-051); the verdict is `disputed` when
+    /// the two disagree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross: Option<Cross>,
+}
+
+/// One model's verdict on a block, kept beside the other's when they disagree.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Cross {
+    pub model: String,
+    pub verdict: String,
+    pub why: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -98,7 +110,10 @@ pub async fn ground(
     let batches: Vec<&[(String, String)]> = items.chunks(12).collect();
     let total = batches.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
-    let calls = batches.iter().map(|batch| {
+    let cross = d.cross_model(mwa_protocol::Role::Verifier);
+    let models = if cross.is_some() { 2 } else { 1 };
+    let (schema, done) = (&schema, &done);
+    let calls = batches.iter().flat_map(|batch| {
         let list: Vec<String> = batch.iter().map(|(id, t)| format!("[{id}] {t}")).collect();
         let prompt = format!(
             "매뉴얼: {}\n\n## 블록\n{}\n\n## 현재 코드의 사실\n{}",
@@ -110,21 +125,33 @@ pub async fn ground(
                 fact_lines.join("\n")
             }
         );
-        let (schema, done) = (&schema, &done);
-        async move {
-            let out = d
-                .call(
-                    mwa_protocol::Role::Verifier,
-                    SYSTEM,
-                    &prompt,
-                    &[],
-                    Some(schema),
-                )
-                .await;
-            let k = done.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            progress(format!("근거 확인 {k}/{total}"));
-            out
-        }
+        (0..models).map(move |m| {
+            let prompt = prompt.clone();
+            async move {
+                let out = if m == 0 {
+                    d.call(
+                        mwa_protocol::Role::Verifier,
+                        SYSTEM,
+                        &prompt,
+                        &[],
+                        Some(schema),
+                    )
+                    .await
+                } else {
+                    d.call_cross(
+                        mwa_protocol::Role::Verifier,
+                        SYSTEM,
+                        &prompt,
+                        &[],
+                        Some(schema),
+                    )
+                    .await
+                };
+                let k = done.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                progress(format!("근거 확인 {k}/{}", total * models));
+                (m, out)
+            }
+        })
     });
     let results = futures::future::join_all(calls).await;
     #[derive(Deserialize)]
@@ -151,7 +178,9 @@ pub async fn ground(
             .map_or(0, |d| d.as_secs()),
         blocks: BTreeMap::new(),
     };
-    for r in results {
+    // The cross model's verdicts, merged after the first model's below.
+    let mut second: BTreeMap<String, RawItem> = BTreeMap::new();
+    for (m, r) in results {
         let raw: Raw = serde_json::from_value(
             r.map_err(|e| ManualError::Invalid(format!("근거 확인 실패: {e}")))?
                 .response
@@ -159,6 +188,10 @@ pub async fn ground(
                 .unwrap_or_default(),
         )
         .map_err(|e| ManualError::Shape(format!("근거 확인: {e}")))?;
+        if m == 1 {
+            second.extend(raw.items.into_iter().map(|it| (it.id.clone(), it)));
+            continue;
+        }
         for it in raw.items {
             let Some(t) = text.get(it.id.as_str()) else {
                 continue;
@@ -174,8 +207,34 @@ pub async fn ground(
                         .collect(),
                     why: it.why,
                     text: (*t).to_string(),
+                    cross: None,
                 },
             );
+        }
+    }
+    if let Some(model) = &cross {
+        for (id, g2) in g.blocks.iter_mut() {
+            let Some(other) = second.remove(id) else {
+                continue;
+            };
+            let agree = other.verdict == g2.verdict;
+            if !agree {
+                g2.verdict = "disputed".into();
+                for f in other
+                    .facts
+                    .into_iter()
+                    .filter(|f| known.contains(f.as_str()))
+                {
+                    if !g2.facts.contains(&f) {
+                        g2.facts.push(f);
+                    }
+                }
+            }
+            g2.cross = Some(Cross {
+                model: model.clone(),
+                verdict: other.verdict,
+                why: other.why,
+            });
         }
     }
     let file = path(ws, feature);
@@ -188,11 +247,16 @@ pub async fn ground(
 pub fn summarize(g: &Grounding) -> String {
     let n = |v: &str| g.blocks.values().filter(|x| x.verdict == v).count();
     format!(
-        "확인됨 {} · 일부만 {} · 코드와 다름 {} · 코드에 근거 없음 {} · 확인할 내용 없음 {}",
+        "확인됨 {} · 일부만 {} · 코드와 다름 {} · 코드에 근거 없음 {} · 확인할 내용 없음 {}{}",
         n("supported"),
         n("partial"),
         n("contradicted"),
         n("unsupported"),
-        n("no_claim")
+        n("no_claim"),
+        if g.blocks.values().any(|x| x.cross.is_some()) {
+            format!(" · 모델 의견 갈림 {}", n("disputed"))
+        } else {
+            String::new()
+        }
     )
 }

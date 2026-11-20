@@ -17,6 +17,7 @@ const VERDICT: Record<string, { label: string; mark: string }> = {
   contradicted: { label: "코드와 다름", mark: "!" },
   unsupported: { label: "코드에 근거 없음", mark: "?" },
   no_claim: { label: "확인할 내용 없음", mark: "·" },
+  disputed: { label: "두 검증 모델의 의견이 갈림 — 사람이 확인", mark: "⚖" },
   stale: { label: "글이 바뀌어 다시 확인 필요", mark: "↻" },
   unchecked: { label: "아직 근거 확인 안 함", mark: "?" },
   picture: { label: "그림 — ② 그림 고르기에서 정함", mark: "▣" },
@@ -131,6 +132,12 @@ export default function BasisGutter({ editor, prov, grounding, pending, facts, r
             ) : ground ? (
               <>
                 <p>{ground.why}</p>
+                {ground.cross && (
+                  <div className="cross">
+                    <b className="mono">{ground.cross.model}</b> {ground.verdict === "disputed" ? "의 다른 판단" : "도 같은 판단"}: <span className="why-verdict">{VERDICT[ground.cross.verdict]?.label ?? ground.cross.verdict}</span>
+                    {ground.verdict === "disputed" && <p>{ground.cross.why}</p>}
+                  </div>
+                )}
                 <FactChips ids={ground.facts} facts={facts} />
                 {mark.verdict === "stale" && <p className="muted small">위 판단은 고치기 전 글에 대한 것입니다. 저장 후 "근거 확인"을 다시 누르세요.</p>}
               </>

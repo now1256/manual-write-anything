@@ -91,6 +91,9 @@ pub struct RoleView {
     pub role: String,
     pub backend: String,
     pub model: String,
+    /// Second model checking the same work (verifier only); empty = none.
+    #[serde(default)]
+    pub cross_model: String,
     /// What the pipeline uses this role for (read only).
     #[serde(default)]
     pub uses: String,
@@ -155,6 +158,7 @@ pub fn read(ws: &Path) -> Result<Settings, String> {
                     role: r.as_str().to_string(),
                     backend: rc.backend.get_ref().clone(),
                     model: rc.model.clone(),
+                    cross_model: rc.cross_model.clone().unwrap_or_default(),
                     uses: role_uses(*r).to_string(),
                 })
             })
@@ -302,6 +306,11 @@ pub fn apply(text: &str, s: &Settings) -> Result<String, String> {
             .ok_or("역할 설정이 표가 아닙니다")?;
         t["backend"] = value(r.backend.trim());
         t["model"] = value(r.model.trim());
+        if r.cross_model.trim().is_empty() {
+            t.remove("cross_model");
+        } else {
+            t["cross_model"] = value(r.cross_model.trim());
+        }
     }
 
     let budget = doc
@@ -440,6 +449,7 @@ mod tests {
         });
         s.agents[0].command = "/opt/claude/bin/claude".into();
         s.roles[1].model = "opus".into();
+        s.roles[2].cross_model = "fable".into();
         s.max_usd_per_run = 3.0;
         s.template = "/docs/sample-manual.md".into();
         save(dir.path(), &s).unwrap();
@@ -455,6 +465,7 @@ mod tests {
         assert_eq!(back.profiles, s.profiles);
         assert_eq!(back.capture, s.capture);
         assert_eq!(back.roles[1].model, "opus");
+        assert_eq!(back.roles[2].cross_model, "fable");
         assert_eq!(back.max_usd_per_run, 3.0);
         assert_eq!(back.template, "/docs/sample-manual.md");
         assert_eq!(back.agents[0].command, "/opt/claude/bin/claude");

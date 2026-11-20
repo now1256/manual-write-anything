@@ -433,6 +433,7 @@ fn store(
                     facts,
                     why: w.why,
                     text: text_of(&block),
+                    cross: None,
                 },
             );
         }
@@ -798,6 +799,7 @@ pub async fn from_pictures(
                         facts,
                         why: format!("지금 화면 그림에서 확인: {}", w.why),
                         text,
+                        cross: None,
                     },
                 );
             }

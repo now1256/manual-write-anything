@@ -101,6 +101,9 @@ enum Cmd {
         /// detail: 저장된 촬영 계획을 버리고 새로 계획합니다
         #[arg(long)]
         replan: bool,
+        /// ref: 저장된 촬영 계획으로 한 번씩만 빠르게 찍습니다 (모델 호출·대조 없음)
+        #[arg(long)]
+        quick: bool,
         /// ref: 이 그림(img/...)의 장면만 다시 찍고 나머지 결과는 둡니다. doc: 이 그림 자리(블록 id)만 다시 찍습니다
         #[arg(long)]
         scene: Option<String>,
@@ -414,6 +417,7 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
             world,
             replan,
             scene,
+            quick,
         } => {
             let cfg = load_config(cli_workspace)?;
             if what == "doc" {
@@ -435,6 +439,7 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
                     &only[0],
                     world,
                     scene.as_deref(),
+                    quick,
                     |l| println!("{l}"),
                 )
                 .await?;
@@ -1702,6 +1707,7 @@ async fn capture_reference(
     feature: &str,
     world: bool,
     only: Option<&str>,
+    quick: bool,
     progress: impl Fn(String) + Send + Sync,
 ) -> Result<mwa_manual::reference::SceneShots> {
     use mwa_capture::detail::Sidecar;
@@ -1792,6 +1798,86 @@ async fn capture_reference(
     let job = capture_job(cap, &spec, profile, cookie, mocks)?;
     let dir = format!("reference/{feature}");
     let result: Result<SceneShots> = async {
+        // Quick: replay the plans that worked before, once each, without a model (no planning,
+        // no judging). For checking crops and sizes fast; a normal run judges again.
+        if quick {
+            let saved = reference::load_scene_shots(ws, feature)
+                .context("저장된 촬영 계획이 없습니다. 먼저 일반 다시 찍기를 하세요")?;
+            let mut plans = Vec::new();
+            for (n, img) in &targets {
+                if let Some(mut p) = saved
+                    .scenes
+                    .iter()
+                    .find(|s| s.image == img.file)
+                    .and_then(|s| s.plan.clone())
+                {
+                    p.todo = id_of(*n, img);
+                    if img.height > 0 {
+                        p.ratio = Some(f64::from(img.width) / f64::from(img.height));
+                    }
+                    plans.push(p);
+                }
+            }
+            anyhow::ensure!(
+                !plans.is_empty(),
+                "저장된 촬영 계획이 있는 장면이 없습니다. 먼저 일반 다시 찍기를 하세요"
+            );
+            progress(format!(
+                "{feature}: 저장된 계획으로 {}장 빠르게 찍는 중 (대조 생략)",
+                plans.len()
+            ));
+            let records =
+                mwa_capture::detail::shoot(sc, &job, ws, &dir, &plans, 1, &progress).await?;
+            let mut scenes = Vec::new();
+            for (n, img) in &targets {
+                let id = id_of(*n, img);
+                let Some(r) = records.iter().find(|r| r.plan.todo == id) else {
+                    continue;
+                };
+                let Some(mut shot) = saved.scenes.iter().find(|s| s.image == img.file).cloned()
+                else {
+                    continue;
+                };
+                shot.attempts.push(reference::attempt_of(r));
+                if r.ok {
+                    shot.file = r.file.clone();
+                    if shot.status == "failed" {
+                        shot.status = "different".into();
+                    }
+                    shot.reason_kind = None;
+                    shot.reason = None;
+                    shot.differences =
+                        vec!["빠른 다시 찍기: 대조를 생략했습니다 (일반 다시 찍기로 판정)".into()];
+                } else {
+                    // A replay that fails keeps the earlier result: usually the data changed (a
+                    // row the plan clicks is gone) and a normal run plans again.
+                    shot.differences.insert(
+                        0,
+                        format!(
+                            "빠른 다시 찍기 실패 — 이전 그림을 그대로 둡니다. 일반 다시 찍기로 계획을 새로 짜세요: {}",
+                            r.error.clone().unwrap_or_default()
+                        ),
+                    );
+                }
+                scenes.push(shot);
+            }
+            let shots = reference::merge_scene_shots(
+                ws,
+                SceneShots {
+                    feature: feature.to_string(),
+                    doc: doc.id.clone(),
+                    taken_at: job.fixed_time / 1000,
+                    scenes,
+                },
+            );
+            reference::save_scene_shots(ws, &shots)?;
+            progress(format!(
+                "{feature}: 빠른 다시 찍기 {}장 중 {}장 성공 · 모델 호출 없음",
+                records.len(),
+                records.iter().filter(|r| r.ok).count()
+            ));
+            return Ok(shots);
+        }
         let pctx = planner_context(ws, &ctx, &w, f, sc, &job).await?;
         let todos: Vec<SceneTodo> = targets
             .iter()

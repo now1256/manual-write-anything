@@ -62,8 +62,12 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
   /** Choices and uploads save at once; this tells the user it happened. */
   const [saved, setSaved] = useState<string | null>(null);
   const done = (what: string) => setSaved(`${what} · ${new Date().toLocaleTimeString("ko-KR")}`);
-  const shoot = (image?: string) =>
-    onCommand("shotref", `${featureKey}${image ? `|${image}` : ""}${demo ? "?demo" : ""}`);
+  const shoot = (image?: string, quick = false) => {
+    const flags = [demo && "demo", quick && "quick"].filter(Boolean).join("&");
+    onCommand("shotref", `${featureKey}${image ? `|${image}` : ""}${flags ? `?${flags}` : ""}`);
+  };
+  /** Scenes with a plan that worked before: the quick re-shoot replays them. */
+  const planned = shots?.scenes.filter((s) => s.plan).length ?? 0;
   const choose = async (image: string, choice: string | null) => {
     try {
       setErr("");
@@ -158,6 +162,15 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
         >
           {shots ? "장면 전체 다시 찍기" : "기존 매뉴얼 장면 찍기"}
         </button>
+        {planned > 0 && (
+          <button
+            className="btn"
+            title="저장된 촬영 계획을 그대로 다시 실행해 한 번씩만 찍습니다. 모델을 부르지 않고 대조도 생략해 빠릅니다. 자르기·크기를 확인할 때 씁니다"
+            onClick={() => shoot(undefined, true)}
+          >
+            빠르게 다시 찍기 ({planned}장)
+          </button>
+        )}
       </div>
       {shots && (
         <div className="ref-summary">

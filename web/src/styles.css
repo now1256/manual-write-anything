@@ -782,3 +782,6 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .auto-runs summary { cursor: pointer; }
 .auto-runs ul { margin: 4px 0 0; padding-left: 18px; color: var(--fg); }
 .tab:disabled { opacity: .4; cursor: not-allowed; }
+.cross { margin: 6px 0; padding: 6px 8px; border-left: 3px solid var(--line); background: var(--panel-2); border-radius: 4px; font-size: 13px; }
+.cross p { margin: 4px 0 0; }
+.cross-pick { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; color: var(--muted); }

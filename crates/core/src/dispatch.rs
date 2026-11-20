@@ -222,6 +222,43 @@ impl Dispatcher {
         }
     }
 
+    /// The role's second model for cross-checking, if one is set.
+    pub fn cross_model(&self, role: Role) -> Option<String> {
+        self.cfg
+            .role(role)?
+            .cross_model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+    }
+
+    /// Like `call`, with the role's cross-check model; logged as `<role>-cross`.
+    pub async fn call_cross(
+        &self,
+        role: Role,
+        system: &str,
+        prompt: &str,
+        images: &[PathBuf],
+        schema: Option<&Value>,
+    ) -> Result<CallOutcome, CoreError> {
+        let rc = self
+            .cfg
+            .role(role)
+            .ok_or(CoreError::RoleNotConfigured(role))?;
+        let model = self
+            .cross_model(role)
+            .ok_or(CoreError::RoleNotConfigured(role))?;
+        let req = Request {
+            system: system.into(),
+            prompt: prompt.into(),
+            images: images.to_vec(),
+            schema: schema.cloned(),
+            model: model.clone(),
+        };
+        let label = format!("{}-cross", role.as_str());
+        self.attempt_labeled(&label, rc.backend.get_ref(), &model, &req, None)
+            .await
+    }
+
     /// Calls one specific backend/model directly (used by `mwa doctor`), still logged and budgeted.
     pub async fn call_backend(
         &self,

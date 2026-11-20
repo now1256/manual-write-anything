@@ -325,6 +325,9 @@ pub struct RoleCfg {
     pub model: String,
     #[serde(default)]
     pub fallback: Option<FallbackCfg>,
+    /// A second model that checks the same work (verifier: cross-check, D-051).
+    #[serde(default)]
+    pub cross_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

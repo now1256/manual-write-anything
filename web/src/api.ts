@@ -249,7 +249,7 @@ export interface Settings {
   product: { name: string; adapter: string; frontend: string; backend: string; openapi: string } | null;
   profiles: { name: string; base_url: string; user_id: string; purpose: string }[];
   capture: { profile: string; domain: string; viewport: [number, number]; scale: number; node: string } | null;
-  roles: { role: string; backend: string; model: string; uses: string }[];
+  roles: { role: string; backend: string; model: string; cross_model?: string; uses: string }[];
   backends: string[];
   max_usd_per_run: number;
   template: string;
@@ -340,6 +340,8 @@ export interface SceneShot {
   differences: string[];
   /** What changed in the product's screen itself; the manual's text follows these. */
   changes?: string[];
+  /** The capture plan that was used (replayed by the quick re-shoot). */
+  plan?: unknown;
   file?: string;
   data?: string;
   /** First plan, then each re-plan. */
@@ -672,6 +674,8 @@ export interface Ground {
   why: string;
   /** Block text when checked. */
   text: string;
+  /** The cross-check model's view (D-051); verdict is `disputed` when they disagree. */
+  cross?: { model: string; verdict: string; why: string } | null;
 }
 
 export interface Grounding {

@@ -842,16 +842,19 @@ impl Host for CliHost {
         if self.capturing.swap(true, Ordering::SeqCst) {
             return Err("이미 촬영 중입니다".into());
         }
-        // "<feature>[|<image>][?demo]": one scene only, demo data instead of the server's.
-        let (target, world) = feature
-            .strip_suffix("?demo")
-            .map_or((feature, false), |f| (f, true));
+        // "<feature>[|<image>][?demo][&quick]": one scene only, demo data instead of the
+        // server's, saved plans replayed without a model.
+        let (target, flags) = feature.split_once('?').unwrap_or((feature, ""));
+        let world = flags.split('&').any(|f| f == "demo");
+        let quick = flags.split('&').any(|f| f == "quick");
         let (feature, only) = target
             .split_once('|')
             .map_or((target, None), |(f, i)| (f, Some(i)));
         let result =
-            crate::capture_reference(&self.ws, &self.cfg, feature, world, only, |l| progress(&l))
-                .await;
+            crate::capture_reference(&self.ws, &self.cfg, feature, world, only, quick, |l| {
+                progress(&l)
+            })
+            .await;
         self.capturing.store(false, Ordering::SeqCst);
         result
             .map(|s| vec![mwa_manual::reference::summarize(&s)])
