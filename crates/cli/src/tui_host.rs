@@ -1048,6 +1048,7 @@ impl Host for CliHost {
                 "ls" => remote::list_dir(&r, if at.is_empty() { "/" } else { &at }).map(|e| {
                     serde_json::json!({ "entries": e.into_iter().map(|(n, d)| serde_json::json!({ "name": n, "dir": d })).collect::<Vec<_>>() })
                 }),
+                "git" => remote::git_state(&r).map(|g| serde_json::to_value(g).unwrap_or_default()),
                 "guess" => remote::guess(&r).map(|f| {
                     serde_json::json!({ "found": f.into_iter().map(|(p, k)| serde_json::json!({ "path": p, "kind": k })).collect::<Vec<_>>() })
                 }),

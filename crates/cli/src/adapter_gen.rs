@@ -276,14 +276,42 @@ fn pick_sources(cfg: &mwa_protocol::Config) -> Result<(String, PathBuf, String, 
         })
         .collect();
     let find = |want: &str| kinds.iter().find(|(_, _, k)| k.contains(want)).cloned();
-    let (Some(f), Some(b)) = (find("Next.js"), find("FastAPI")) else {
+    let (front, back) = (find("Next.js"), find("FastAPI"));
+    let (Some(f), Some(b)) = (front.clone(), back.clone()) else {
+        // Say what is missing, and what to do about it.
+        let unsynced: Vec<&str> = kinds
+            .iter()
+            .filter(|(_, p, _)| !p.is_dir())
+            .map(|(n, _, _)| n.as_str())
+            .collect();
         let seen: Vec<String> = kinds
             .iter()
+            .filter(|(_, p, _)| p.is_dir())
             .map(|(n, _, k)| format!("{n}: {}", if k.is_empty() { "알 수 없음" } else { k }))
             .collect();
+        let mut why = Vec::new();
+        if !unsynced.is_empty() {
+            why.push(format!(
+                "아직 받지 않은 소스가 있습니다({}) — 1단계(코드 연결)에서 \"소스 받기\"를 먼저 누르세요",
+                unsynced.join(", ")
+            ));
+        }
+        if front.is_none() {
+            why.push(
+                "Next.js 프론트 코드 폴더가 없습니다 (package.json에 next가 있는 폴더)".into(),
+            );
+        }
+        if back.is_none() {
+            why.push("FastAPI 백엔드 코드 폴더가 없습니다 — 1단계에서 서버에 백엔드 폴더를 추가하고 저장하세요".into());
+        }
         anyhow::bail!(
-            "Next.js 프론트와 FastAPI 백엔드 코드를 찾지 못했습니다 ({}). 코드 소스가 각 앱 폴더(package.json, FastAPI 코드가 있는 곳)를 가리키는지 확인하세요",
-            seen.join(", ")
+            "{}. 지금 연결된 코드: {}",
+            why.join(". "),
+            if seen.is_empty() {
+                "없음".to_string()
+            } else {
+                seen.join(", ")
+            }
         );
     };
     Ok((f.0, f.1, b.0, b.1))

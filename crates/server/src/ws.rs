@@ -10,13 +10,12 @@ use tokio::sync::mpsc;
 use crate::protocol::{ClientMsg, ServerMsg};
 
 pub async fn upgrade(ws: WebSocketUpgrade, State(hub): State<Arc<crate::Hub>>) -> Response {
-    // A session stays with the project that was open when it connected; the UI reloads
-    // after switching projects.
-    let host = hub.host();
-    ws.on_upgrade(move |socket| session(socket, host))
+    ws.on_upgrade(move |socket| session(socket, hub))
 }
 
-async fn session(socket: WebSocket, host: Arc<dyn Host>) {
+/// Each message goes to the engine open at that moment: saving the settings reopens it, and
+/// a command sent right after must see the new settings.
+async fn session(socket: WebSocket, hub: Arc<crate::Hub>) {
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<ServerMsg>();
     let writer = tokio::spawn(async move {
@@ -28,13 +27,13 @@ async fn session(socket: WebSocket, host: Arc<dyn Host>) {
         }
     });
     let _ = tx.send(ServerMsg::Status {
-        status: host.status(),
+        status: hub.host().status(),
     });
 
     while let Some(Ok(msg)) = stream.next().await {
         let Message::Text(text) = msg else { continue };
         match serde_json::from_str::<ClientMsg>(&text) {
-            Ok(m) => handle(m, &host, &tx),
+            Ok(m) => handle(m, &hub.host(), &tx),
             Err(e) => {
                 let _ = tx.send(ServerMsg::Error {
                     id: 0,

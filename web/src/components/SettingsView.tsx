@@ -3,13 +3,17 @@ import { checkField, fetchSettings, saveSettings, setPassword, type Settings } f
 import Checked from "./Checked";
 import PathPicker from "./PathPicker";
 import ReferenceSettings from "./ReferenceSettings";
-import SshSourceForm from "./SshSourceForm";
+import SshServer from "./SshServer";
 
 type Picker = { mode: "dir" | "file"; ext?: string; start?: string; onPick: (p: string) => void };
 
 interface Props {
   /** Setup step opened from "시작하기": only its section shows, and saving goes back. */
   focus?: string | null;
+  /** Inside the setup wizard: no title or close button, and saving reports back instead of
+   * reloading the page. */
+  embedded?: boolean;
+  onSaved?: () => void;
   onClose: () => void;
   onCommand: (name: string) => void;
 }
@@ -24,7 +28,7 @@ const STEP_TITLE: Record<string, string> = {
   template: "매뉴얼 양식",
 };
 
-export default function SettingsView({ focus, onClose, onCommand }: Props) {
+export default function SettingsView({ focus, embedded, onSaved, onClose, onCommand }: Props) {
   const show = (k: string) => !focus || focus === k;
   const [s, setS] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +54,20 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
   if (error && !s) return <div className="empty error">설정을 불러오지 못했습니다: {error}</div>;
   if (!s) return <div className="empty">불러오는 중…</div>;
 
+  /** Removes sources and keeps each remaining one's kind (folder, Git, SSH) by its new place. */
+  const removeSources = (gone: number[]) => {
+    update((d) => {
+      d.sources = d.sources.filter((_, k) => !gone.includes(k));
+    });
+    setMode((m) => {
+      const kept = Object.entries(m)
+        .map(([k, v]) => [Number(k), v] as const)
+        .filter(([k]) => !gone.includes(k))
+        .sort((x, y) => x[0] - y[0]);
+      return Object.fromEntries(kept.map(([, v], n) => [n, v]));
+    });
+  };
+
   const update = (f: (d: Settings) => void) => {
     const d = structuredClone(s);
     f(d);
@@ -65,7 +83,8 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
       const r = await saveSettings(s);
       setNote(r.note);
       setDirty(false);
-      setTimeout(() => window.location.reload(), 900);
+      if (onSaved) onSaved();
+      else setTimeout(() => window.location.reload(), 900);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -79,6 +98,7 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
       const r = await setPassword(profile, pw[profile] ?? "");
       setPw((p) => ({ ...p, [profile]: "" }));
       setNote(`${profile}: ${r.note}`);
+      onSaved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -107,11 +127,11 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
   return (
     <div className="settings">
       <div className="settings-head">
-        <h2>{focus ? `시작하기 · ${STEP_TITLE[focus] ?? "설정"}` : "프로젝트 설정"}</h2>
-        {focus && <span className="muted small">저장하면 시작하기로 돌아가 다음 단계가 열립니다</span>}
+        {!embedded && <h2>{focus ? `시작하기 · ${STEP_TITLE[focus] ?? "설정"}` : "프로젝트 설정"}</h2>}
+        {!embedded && focus && <span className="muted small">저장하면 시작하기로 돌아가 다음 단계가 열립니다</span>}
         <span className="spacer" />
         {dirty && <span className="badge warn">저장하지 않은 변경</span>}
-        <button
+        {!embedded && <button
           onClick={() => {
             if (dirty && !closing) {
               setClosing(true);
@@ -122,7 +142,7 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
           }}
         >
           닫기
-        </button>
+        </button>}
         <button className="primary" disabled={saving} onClick={save}>
           {saving ? "저장 중…" : "저장"}
         </button>
@@ -135,45 +155,90 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
       <section>
         <h3>코드 소스</h3>
         <p className="muted small">프론트·백엔드 코드를 연결합니다. 이미 있는 폴더(git 저장소)를 고르거나, Git 주소를 적으면 프로젝트 안에 받아 옵니다. 코드는 읽기만 합니다.</p>
-        {s.sources.map((src, i) => (
-          <div key={i} className="source-card">
-            <div className="source-row">
-              <input className="name" placeholder="이름 (예: frontend)" value={src.name} onChange={(e) => update((d) => (d.sources[i].name = e.target.value))} />
-              <div className="seg">
-                <button className={(mode[i] ?? "folder") === "folder" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "folder" }))}>폴더</button>
-                <button className={mode[i] === "git" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "git" }))}>Git</button>
-                <button className={mode[i] === "ssh" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "ssh" }))}>SSH 서버</button>
-              </div>
-              <button title="삭제" onClick={() => update((d) => d.sources.splice(i, 1))}>✕</button>
-            </div>
-            {mode[i] === "ssh" ? (
-              <SshSourceForm
-                place={{ ssh: src.ssh ?? "", jump: src.jump ?? "", docker: src.docker ?? "", remote_path: src.remote_path ?? "" }}
-                onChange={(p) => update((d) => { Object.assign(d.sources[i], p); d.sources[i].git = ""; d.sources[i].path = ""; })}
-                onAddSite={(u) => update((d) => d.profiles.push({ name: `site${d.profiles.length + 1}`, base_url: u, user_id: "", purpose: "capture" }))}
-              />
-            ) : mode[i] !== "git" ? (
-              <>
-                <div className="source-row">
-                  <input className="grow" placeholder="/코드/폴더/경로" value={src.path} onChange={(e) => update((d) => ((d.sources[i].path = e.target.value), (d.sources[i].git = "")))} />
-                  <button onClick={() => setPicker({ mode: "dir", start: src.path, onPick: (p) => update((d) => { d.sources[i].path = p; d.sources[i].git = ""; if (!d.sources[i].name) d.sources[i].name = p.split("/").pop() ?? ""; }) })}>찾아보기</button>
-                </div>
-                <Checked kind="folder" value={src.path} />
-              </>
-            ) : (
-              <>
-                <div className="source-row">
-                  <input className="grow" placeholder="git 주소 (git@github.com:org/repo.git 또는 https://…)" value={src.git} onChange={(e) => update((d) => ((d.sources[i].git = e.target.value), (d.sources[i].path = "")))} />
-                  <input className="branch" placeholder="브랜치 (예: main)" value={src.branch} onChange={(e) => update((d) => (d.sources[i].branch = e.target.value))} />
-                </div>
-                <Checked kind="git" value={src.git} extra={src.branch} />
-              </>
-            )}
-          </div>
-        ))}
+        {(() => {
+          // SSH sources grouped by server (the same route); the rest as cards of their own.
+          const groups: { key: string; first: number; members: number[] }[] = [];
+          s.sources.forEach((src, i) => {
+            if (mode[i] !== "ssh") return;
+            const key = src.ssh || src.jump ? `${src.jump ?? ""}|${src.ssh ?? ""}` : `new:${i}`;
+            const g = groups.find((x) => x.key === key);
+            if (g) g.members.push(i);
+            else groups.push({ key, first: i, members: [i] });
+          });
+          const addSite = (u: string) => {
+            const name = `site${s.profiles.length + 1}`;
+            update((d) => {
+              if (!d.profiles.some((p) => p.base_url === u)) d.profiles.push({ name, base_url: u, user_id: "", purpose: "capture" });
+              // The first site becomes the one to shoot.
+              if (!d.capture) d.capture = { profile: name, domain: "", viewport: [1440, 900], scale: 2, node: "" };
+            });
+            return name;
+          };
+          return (
+            <>
+              {groups.map((g) => {
+                const lead = s.sources[g.first];
+                return (
+                  <SshServer
+                    // Keyed by its first source, not the route: editing the route keeps the card.
+                    key={`server-${g.first}`}
+                    ssh={lead.ssh ?? ""}
+                    jump={lead.jump ?? ""}
+                    folders={g.members.map((i) => ({ index: i, name: s.sources[i].name, docker: s.sources[i].docker ?? "", remote_path: s.sources[i].remote_path ?? "" }))}
+                    onRoute={(r) => update((d) => g.members.forEach((i) => { d.sources[i].ssh = r.ssh; d.sources[i].jump = r.jump; d.sources[i].git = ""; d.sources[i].path = ""; }))}
+                    onFolder={(i, patch) => update((d) => Object.assign(d.sources[i], patch))}
+                    onAddFolder={() => {
+                      update((d) => d.sources.push({ name: "", path: "", git: "", branch: "", ssh: lead.ssh ?? "", jump: lead.jump ?? "", docker: "", remote_path: "" }));
+                      setMode((m) => ({ ...m, [s.sources.length]: "ssh" }));
+                    }}
+                    onRemoveFolder={(i) => removeSources([i])}
+                    onRemoveServer={() => removeSources(g.members)}
+                    sites={s.profiles.map((p) => p.base_url)}
+                    onAddSite={addSite}
+                  />
+                );
+              })}
+              {s.sources.map((src, i) =>
+                mode[i] === "ssh" ? null : (
+                  <div key={i} className="source-card">
+                    <div className="source-row">
+                      <input className="name" placeholder="이름 (예: frontend)" value={src.name} onChange={(e) => update((d) => (d.sources[i].name = e.target.value))} />
+                      <div className="seg">
+                        <button className={(mode[i] ?? "folder") === "folder" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "folder" }))}>이 컴퓨터 폴더</button>
+                        <button className={mode[i] === "git" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "git" }))}>Git 주소</button>
+                      </div>
+                      <button title="삭제" onClick={() => removeSources([i])}>✕</button>
+                    </div>
+                    {mode[i] !== "git" ? (
+                      <>
+                        <div className="source-row">
+                          <input className="grow" placeholder="/코드/폴더/경로" value={src.path} onChange={(e) => update((d) => ((d.sources[i].path = e.target.value), (d.sources[i].git = "")))} />
+                          <button onClick={() => setPicker({ mode: "dir", start: src.path, onPick: (p) => update((d) => { d.sources[i].path = p; d.sources[i].git = ""; if (!d.sources[i].name) d.sources[i].name = p.split("/").pop() ?? ""; }) })}>찾아보기</button>
+                        </div>
+                        <Checked kind="folder" value={src.path} />
+                      </>
+                    ) : (
+                      <>
+                        <div className="source-row">
+                          <input className="grow" placeholder="git 주소 (git@github.com:org/repo.git 또는 https://…)" value={src.git} onChange={(e) => update((d) => ((d.sources[i].git = e.target.value), (d.sources[i].path = "")))} />
+                          <input className="branch" placeholder="브랜치 (예: main)" value={src.branch} onChange={(e) => update((d) => (d.sources[i].branch = e.target.value))} />
+                        </div>
+                        <Checked kind="git" value={src.git} extra={src.branch} />
+                      </>
+                    )}
+                  </div>
+                ),
+              )}
+            </>
+          );
+        })()}
         <div className="settings-actions">
-          <button onClick={() => { update((d) => d.sources.push({ name: "", path: "", git: "", branch: "" })); }}>소스 추가</button>
-          {s.sources.some((x) => x.git || x.ssh) && <button onClick={() => onCommand("sync")}>소스 받기 (Git·SSH, 저장 후)</button>}
+          <button onClick={() => {
+            update((d) => d.sources.push({ name: "", path: "", git: "", branch: "", ssh: "", jump: "", docker: "", remote_path: "" }));
+            setMode((m) => ({ ...m, [s.sources.length]: "ssh" }));
+          }}>+ 서버 추가 (SSH)</button>
+          <button onClick={() => { update((d) => d.sources.push({ name: "", path: "", git: "", branch: "" })); }}>+ 이 컴퓨터 폴더 · Git 추가</button>
+          {!embedded && s.sources.some((x) => x.git || x.ssh) && <button onClick={() => onCommand("sync")}>소스 받기 (Git·SSH, 저장 후)</button>}
         </div>
       </section>
       )}
@@ -285,7 +350,7 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
       </section>
       )}
 
-      <ReferenceSettings />
+      {!focus && <ReferenceSettings />}
 
       {!focus && (
       <section>

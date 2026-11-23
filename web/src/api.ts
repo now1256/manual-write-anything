@@ -622,7 +622,8 @@ export interface SourceProbe {
   ports: number[];
   path_ok: boolean;
   entries: string[];
-  urls: [string, string][];
+  /** Site addresses, those mwa's machine can reach first. */
+  urls: { url: string; what: string; reachable: boolean }[];
 }
 
 export interface SshPlace {
@@ -640,6 +641,16 @@ export const sshList = (src: SshPlace, path: string) =>
   postJson<{ entries: { name: string; dir: boolean }[] }>("/api/sources/probe", { ...src, action: "ls", path });
 export const sshGuess = (src: SshPlace) =>
   postJson<{ found: { path: string; kind: string }[] }>("/api/sources/probe", { ...src, action: "guess" });
+/** The folder's working state as it will be copied. */
+export interface SshGitState {
+  repo: boolean;
+  branch: string;
+  head: string;
+  dirty: number;
+  ahead: number | null;
+  behind: number | null;
+}
+export const sshGit = (src: SshPlace) => postJson<SshGitState>("/api/sources/probe", { ...src, action: "git" });
 export const sshKey = () => postJson<{ public_key: string }>("/api/sources/probe", { action: "key" });
 
 export const setSceneInstruction = (feature: string, image: string, instruction: string | null) =>

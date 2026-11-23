@@ -1,7 +1,9 @@
 //! Code on another machine (D-054): reached over SSH, through jump hosts, and into a Docker
 //! container when the code lives there. Only fixed read-only commands run remotely (`tar -c`,
-//! `git rev-parse`, `docker ps`, `ss -ltn`); the copy is kept here as a git repository so the
-//! rest of mwa sees commits and changed files as with any other source.
+//! `git` reads without optional locks — `status` would otherwise refresh `.git/index` while a
+//! person works there —, `docker ps`, `ss -ltn`, `ls`); nothing on the server is written. The
+//! copy is kept here as a git repository so the rest of mwa sees commits and changed files as
+//! with any other source.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -63,6 +65,12 @@ const SKIP: &[&str] = &[
     "__pycache__",
     ".venv",
     "venv",
+    ".pytest_cache",
+    ".cache",
+    "log",
+    "logs",
+    "temp",
+    "tmp",
 ];
 
 fn quote(s: &str) -> String {
@@ -276,7 +284,7 @@ pub fn sync(r: &Remote, dest: &Path) -> Result<String, SourceError> {
     }
     let remote_sha = r
         .run(&r.inner(&format!(
-            "git -C {} rev-parse --short HEAD 2>/dev/null || true",
+            "git --no-optional-locks -C {} rev-parse --short HEAD 2>/dev/null || true",
             quote(r.path)
         )))
         .unwrap_or_default()
@@ -347,8 +355,8 @@ pub struct Probe {
     pub path_ok: bool,
     /// Top entries of the folder, to see it is the code.
     pub entries: Vec<String>,
-    /// Addresses to try as the site to shoot: (url, what serves it).
-    pub urls: Vec<(String, String)>,
+    /// Addresses to try as the site to shoot, those this machine reaches first.
+    pub urls: Vec<SiteUrl>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -358,20 +366,33 @@ pub struct Container {
     pub ports: String,
 }
 
-/// Looks around the host (read only).
-pub fn probe(r: &Remote) -> Result<Probe, SourceError> {
+#[derive(Debug, Clone, Serialize)]
+pub struct SiteUrl {
+    pub url: String,
+    /// What serves it ("root-manage 안의 :3000").
+    pub what: String,
+    /// This machine (where mwa shoots from) can open a connection to it.
+    pub reachable: bool,
+}
+
+/// Containers and listening ports of the host `r` lands on.
+fn host_view(r: &Remote) -> Result<(Vec<Container>, Vec<u16>), SourceError> {
     let host_part = "docker ps --format '{{.Names}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null; echo '---mwa---'; (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null)";
     let out = r.run(host_part)?;
     let (docker, listen) = out.split_once("---mwa---").unwrap_or((&out, ""));
-    let mut p = Probe::default();
-    for line in docker.lines().filter(|l| !l.trim().is_empty()) {
-        let mut f = line.split('\t');
-        p.containers.push(Container {
-            name: f.next().unwrap_or("").to_string(),
-            image: f.next().unwrap_or("").to_string(),
-            ports: f.next().unwrap_or("").to_string(),
-        });
-    }
+    let containers = docker
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let mut f = line.split('\t');
+            Container {
+                name: f.next().unwrap_or("").to_string(),
+                image: f.next().unwrap_or("").to_string(),
+                ports: f.next().unwrap_or("").to_string(),
+            }
+        })
+        .collect();
+    let mut ports = Vec::new();
     for line in listen.lines() {
         // "LISTEN 0 4096 0.0.0.0:3001 0.0.0.0:*" — the local address is the 4th field.
         let Some(addr) = line
@@ -384,41 +405,141 @@ pub fn probe(r: &Remote) -> Result<Probe, SourceError> {
             continue;
         }
         if let Some(port) = addr.rsplit(':').next().and_then(|x| x.parse::<u16>().ok())
-            && !p.ports.contains(&port)
+            && !ports.contains(&port)
         {
-            p.ports.push(port);
+            ports.push(port);
         }
     }
-    p.ports.sort_unstable();
-    let host = r.host();
-    for c in &p.containers {
-        // "0.0.0.0:3001->3000/tcp, :::3001->3000/tcp"
-        for part in c.ports.split(',') {
-            // A port forwarded to the container's SSH is not a web page.
-            if let Some((outside, inside)) = part.trim().split_once("->")
-                && !inside.starts_with("22/")
-                && let Some(port) = outside
-                    .rsplit(':')
-                    .next()
-                    .and_then(|x| x.parse::<u16>().ok())
-            {
-                let url = format!("http://{host}:{port}");
-                if !p.urls.iter().any(|(u, _)| *u == url) {
-                    p.urls.push((url, format!("{} ({})", c.name, c.image)));
-                }
-            }
+    ports.sort_unstable();
+    Ok((containers, ports))
+}
+
+/// "0.0.0.0:3001->3000/tcp, :::3001->3000/tcp" → [(3001, "3000")], SSH forwards left out.
+fn published(c: &Container) -> Vec<(u16, String)> {
+    let mut out: Vec<(u16, String)> = Vec::new();
+    for part in c.ports.split(',') {
+        if let Some((outside, inside)) = part.trim().split_once("->")
+            && !inside.starts_with("22/")
+            && let Some(port) = outside
+                .rsplit(':')
+                .next()
+                .and_then(|x| x.parse::<u16>().ok())
+            && !out.iter().any(|(p, _)| *p == port)
+        {
+            out.push((port, inside.split('/').next().unwrap_or("").to_string()));
         }
     }
-    for port in &p.ports {
+    out
+}
+
+/// Web addresses on `host`: what containers publish, then other open ports.
+fn web_urls(host: &str, containers: &[Container], ports: &[u16]) -> Vec<(String, String)> {
+    let mut urls: Vec<(String, String)> = Vec::new();
+    for c in containers {
+        for (port, inside) in published(c) {
+            urls.push((
+                format!("http://{host}:{port}"),
+                format!("{} 안의 :{inside}", c.name),
+            ));
+        }
+    }
+    for port in ports {
         let url = format!("http://{host}:{port}");
-        let ssh_forward = p
-            .containers
+        let ssh_forward = containers
             .iter()
             .any(|c| c.ports.contains(&format!(":{port}->22/")));
-        if *port != 22 && !ssh_forward && !p.urls.iter().any(|(u, _)| *u == url) {
-            p.urls.push((url, "열린 포트".into()));
+        if *port != 22 && !ssh_forward && !urls.iter().any(|(u, _)| *u == url) {
+            urls.push((url, "열린 포트".into()));
         }
     }
+    urls
+}
+
+/// Whether this machine can open a connection to the address (2 seconds each, all at once).
+fn reachable(urls: Vec<(String, String)>) -> Vec<SiteUrl> {
+    let mut out: Vec<SiteUrl> = std::thread::scope(|s| {
+        let tasks: Vec<_> = urls
+            .into_iter()
+            .map(|(url, what)| {
+                s.spawn(move || {
+                    let addr = url.trim_start_matches("http://").to_string();
+                    let ok = std::net::ToSocketAddrs::to_socket_addrs(&addr)
+                        .ok()
+                        .and_then(|mut a| a.next())
+                        .is_some_and(|a| {
+                            std::net::TcpStream::connect_timeout(
+                                &a,
+                                std::time::Duration::from_secs(2),
+                            )
+                            .is_ok()
+                        });
+                    SiteUrl {
+                        url,
+                        what,
+                        reachable: ok,
+                    }
+                })
+            })
+            .collect();
+        tasks.into_iter().filter_map(|t| t.join().ok()).collect()
+    });
+    out.sort_by_key(|u| !u.reachable);
+    out
+}
+
+/// Looks around the host (read only). When the target is a container's SSH seen as
+/// `localhost:<port>` from the last jump host, its web ports are found on that jump host,
+/// under the numbers the outside sees.
+pub fn probe(r: &Remote) -> Result<Probe, SourceError> {
+    let (containers, ports) = host_view(r)?;
+    let mut p = Probe {
+        containers,
+        ports,
+        ..Probe::default()
+    };
+    let target_host = {
+        let h = r.target.rsplit('@').next().unwrap_or(r.target);
+        h.rsplit_once(':').map_or(h, |(h, _)| h)
+    };
+    let nested =
+        !r.jump.is_empty() && (target_host == "localhost" || target_host.starts_with("127."));
+    let urls = if nested {
+        let last = r.jump.last().expect("not empty");
+        let outer = Remote {
+            target: last,
+            jump: &r.jump[..r.jump.len() - 1],
+            docker: None,
+            path: ".",
+            ..r.clone()
+        };
+        let outer_host = who(last).rsplit('@').next().unwrap_or("").to_string();
+        let target_port = r
+            .target
+            .rsplit_once(':')
+            .and_then(|(_, p)| p.parse::<u16>().ok())
+            .unwrap_or(22);
+        match host_view(&outer) {
+            Ok((oc, oports)) => match oc
+                .iter()
+                .find(|c| c.ports.contains(&format!(":{target_port}->22/")))
+            {
+                Some(c) => published(c)
+                    .into_iter()
+                    .map(|(port, inside)| {
+                        (
+                            format!("http://{outer_host}:{port}"),
+                            format!("{} 안의 :{inside}", c.name),
+                        )
+                    })
+                    .collect(),
+                None => web_urls(&outer_host, &oc, &oports),
+            },
+            Err(_) => web_urls(&r.host(), &p.containers, &p.ports),
+        }
+    } else {
+        web_urls(&r.host(), &p.containers, &p.ports)
+    };
+    p.urls = reachable(urls);
     let listing = r
         .run(&r.inner(&format!(
             "test -d {0} && ls -A {0} | head -40",
@@ -460,13 +581,18 @@ pub fn list_dir(r: &Remote, path: &str) -> Result<Vec<(String, bool)>, SourceErr
     Ok(v)
 }
 
-/// Folders that look like the code: the container's working folder and the usual places,
-/// with what marks them (`package.json`, Python).
+/// Folders that look like the code: the working folder and the usual places (home folders
+/// included), with what they hold — a Next.js frontend, a FastAPI backend, or less sure marks.
 pub fn guess(r: &Remote) -> Result<Vec<(String, String)>, SourceError> {
-    let script = "for d in \"$(pwd)\" /app /usr/src/app /code /srv/app /srv /opt/app /workspace /var/www/app /home/*/app /home/*/*; do \
-[ -d \"$d\" ] || continue; \
-if [ -f \"$d/package.json\" ]; then echo \"$d|package.json\"; \
-elif [ -f \"$d/pyproject.toml\" ] || [ -f \"$d/requirements.txt\" ]; then echo \"$d|Python\"; fi; done";
+    let script = r#"for d in "$(pwd)" /app /usr/src/app /code /workspace /workspace/* /srv /srv/* /opt/app /opt/* /var/www/* /root/* /home/* /home/*/*; do
+[ -d "$d" ] || continue
+case "$d" in */node_modules|*/.*) continue;; esac
+if [ -f "$d/package.json" ]; then
+  if ls "$d"/next.config.* >/dev/null 2>&1 || grep -q '"next"' "$d/package.json" 2>/dev/null; then echo "$d|Next.js 프론트"; else echo "$d|package.json"; fi
+elif find "$d" -maxdepth 2 -name '*.py' -not -path '*/node_modules/*' 2>/dev/null | head -400 | xargs grep -l -m1 -s -E '^(from|import) fastapi' 2>/dev/null | head -n 1 | grep -q .; then echo "$d|FastAPI 백엔드"
+elif [ -f "$d/pyproject.toml" ] || [ -f "$d/requirements.txt" ]; then echo "$d|Python"
+elif [ -d "$d/.git" ]; then echo "$d|Git 저장소"; fi
+done"#;
     let out = r.run(&r.inner(script))?;
     let mut v: Vec<(String, String)> = Vec::new();
     for l in out.lines() {
@@ -476,7 +602,63 @@ elif [ -f \"$d/pyproject.toml\" ] || [ -f \"$d/requirements.txt\" ]; then echo \
             v.push((d.to_string(), k.to_string()));
         }
     }
+    // The code first: frontends and backends, then the rest.
+    let rank = |k: &str| match k {
+        "Next.js 프론트" | "FastAPI 백엔드" => 0,
+        "package.json" | "Python" => 1,
+        _ => 2,
+    };
+    v.sort_by_key(|(_, k)| rank(k));
     Ok(v)
+}
+
+/// The folder's git state as it is now (read only): what mwa copies is this working state,
+/// which may be ahead of what was pushed.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GitState {
+    /// The folder is inside a git repository.
+    pub repo: bool,
+    pub branch: String,
+    pub head: String,
+    /// Files changed and not committed.
+    pub dirty: usize,
+    /// Commits ahead of / behind the branch's upstream (none without one).
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
+}
+
+pub fn git_state(r: &Remote) -> Result<GitState, SourceError> {
+    let p = quote(r.path);
+    let script = format!(
+        "cd {p} 2>/dev/null || exit 0; export GIT_OPTIONAL_LOCKS=0; \
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0; \
+echo repo; git rev-parse --abbrev-ref HEAD; git rev-parse --short HEAD; \
+git --no-optional-locks status --porcelain 2>/dev/null | wc -l; \
+git rev-list --left-right --count @{{u}}...HEAD 2>/dev/null || echo -"
+    );
+    let out = r.run(&r.inner(&script))?;
+    let mut lines = out.lines().map(str::trim);
+    if lines.next() != Some("repo") {
+        return Ok(GitState::default());
+    }
+    let branch = lines.next().unwrap_or("").to_string();
+    let head = lines.next().unwrap_or("").to_string();
+    let dirty = lines.next().and_then(|l| l.parse().ok()).unwrap_or(0);
+    let (behind, ahead) = match lines
+        .next()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>())
+    {
+        Some(v) if v.len() == 2 => (v[0].parse().ok(), v[1].parse().ok()),
+        _ => (None, None),
+    };
+    Ok(GitState {
+        repo: true,
+        branch,
+        head,
+        dirty,
+        ahead,
+        behind,
+    })
 }
 
 /// mwa's own key (made once in its data folder); returns the public part to put on servers.
@@ -565,6 +747,8 @@ mod tests {
         let p = probe(&r).unwrap();
         assert!(p.path_ok && p.entries.contains(&"src".to_string()));
         assert!(check(&r).unwrap().contains('@'));
+        let g = git_state(&r).unwrap();
+        assert!(!g.repo, "a plain folder is not a repository");
         let ls = list_dir(&r, &path).unwrap();
         assert_eq!(ls.first(), Some(&("node_modules".to_string(), true)));
         let config = std::fs::read_to_string(kh.with_file_name("config")).unwrap();

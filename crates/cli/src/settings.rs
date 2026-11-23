@@ -411,9 +411,11 @@ fn missing(s: &Settings) -> Option<String> {
             return Some("제품의 어댑터 파일을 고르세요".into());
         }
     }
+    // A site may be saved before its login (the address found while connecting the code);
+    // the id comes in "사이트와 계정", which stays unfinished until then.
     for p in &s.profiles {
-        if p.name.trim().is_empty() || p.base_url.trim().is_empty() || p.user_id.trim().is_empty() {
-            return Some("계정의 이름·사이트 주소·아이디를 모두 적으세요".into());
+        if p.name.trim().is_empty() || p.base_url.trim().is_empty() {
+            return Some("사이트의 이름과 주소를 적으세요".into());
         }
     }
     if let Some(c) = &s.capture

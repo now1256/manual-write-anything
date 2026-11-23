@@ -28,7 +28,7 @@ export default function Sidebar({ map, selected, onSelect }: Props) {
         <span>기능 {map?.features.length ?? 0}</span>
       </div>
       <input className="search" placeholder="기능 찾기" value={query} onChange={(e) => setQuery(e.target.value)} />
-      {!map && <p className="muted pad">제품 지도가 없습니다. /map 을 실행하세요.</p>}
+      {!map && <p className="muted pad">기능 목록은 시작하기의 "코드 읽고 제품 파악" 뒤에 나타납니다.</p>}
       <div className="tree">
         {groups.map((g) => (
           <div key={g.name} className="group">

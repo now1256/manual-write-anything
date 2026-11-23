@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Channel,
   fetchMap,
+  fetchSetup,
   fetchShots,
   fetchState,
   setChatModel,
@@ -13,6 +14,7 @@ import {
 import { COMMANDS } from "./commands";
 import ProjectSwitcher from "./components/ProjectSwitcher";
 import SettingsView from "./components/SettingsView";
+import SetupWizard from "./components/SetupWizard";
 import SetupChecklist from "./components/SetupChecklist";
 import Sidebar from "./components/Sidebar";
 import FeatureView from "./components/FeatureView";
@@ -27,6 +29,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   /** A setup step opened in the settings: only its section shows. */
   const [settingsFocus, setSettingsFocus] = useState<string | null>(null);
+  /** The setup wizard: opens by itself while a required step is not done. */
+  const [wizard, setWizard] = useState(false);
   const [setupVersion, setSetupVersion] = useState(0);
   const [map, setMap] = useState<ProductMap | null>(null);
   const [shots, setShots] = useState<ShotsManifest | null>(null);
@@ -104,6 +108,18 @@ export default function App() {
     return () => ch.close();
   }, [onMessage, reload]);
 
+  // A project opened (or switched to) with a required step left: the wizard first.
+  const workspace = state?.header.workspace ?? null;
+  useEffect(() => {
+    if (!workspace) return;
+    fetchSetup()
+      .then((steps) => {
+        const required = ["code", "claude", "product", "account"];
+        if (steps.some((s) => required.includes(s.key) && !s.done)) setWizard(true);
+      })
+      .catch(() => {});
+  }, [workspace]);
+
   const feature = useMemo(() => map?.features.find((f) => f.key === selected) ?? null, [map, selected]);
 
   const LABELS: Record<string, string> = {
@@ -150,6 +166,7 @@ export default function App() {
         <ProjectSwitcher current={state?.header.workspace ?? null} />
         <button className={`topbar-button ${showSettings ? "active" : ""}`} onClick={() => {
             setSettingsFocus(null);
+            setWizard(false);
             setShowSettings((v) => !v);
           }}>
           설정
@@ -178,6 +195,17 @@ export default function App() {
               }}
               onCommand={runCommand}
             />
+          ) : wizard ? (
+            <SetupWizard
+              version={setupVersion}
+              busy={busy}
+              onCommand={runCommand}
+              onClose={() => {
+                setWizard(false);
+                setSetupVersion((v) => v + 1);
+                void reload();
+              }}
+            />
           ) : feature ? (
             <FeatureView
               feature={feature}
@@ -189,10 +217,7 @@ export default function App() {
             />
           ) : (
             <>
-              <SetupChecklist version={setupVersion} onCommand={runCommand} onOpenSettings={(step) => {
-                  setSettingsFocus(step);
-                  setShowSettings(true);
-                }} />
+              <SetupChecklist version={setupVersion} onOpen={() => setWizard(true)} />
               <Overview map={map} shots={shots} onCommand={runCommand} onOpen={setSelected} version={setupVersion + manualVersion} />
             </>
           )}

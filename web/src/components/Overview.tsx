@@ -17,8 +17,7 @@ export default function Overview({ map, shots, onCommand, onOpen, version }: Pro
   if (!map) {
     return (
       <div className="empty">
-        <p>제품 지도가 아직 없습니다.</p>
-        <button className="btn" onClick={() => onCommand("map")}>/map 실행</button>
+        <p>기능 목록(제품 지도)이 아직 없습니다. 위 "시작하기"를 순서대로 하면 "코드 읽고 제품 파악" 단계에서 만들어집니다.</p>
       </div>
     );
   }

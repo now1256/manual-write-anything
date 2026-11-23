@@ -415,13 +415,35 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
     // The adapter is written from the code (D-049) and checked by building the product map.
     let has_map = ws.join("map/product-map.json").is_file();
     out.push(match &cfg.product {
-        Some(p) if abs(ws, &p.adapter).is_file() && has_map => step(
-            "product",
-            "코드 읽고 제품 파악",
-            true,
-            p.name.clone().unwrap_or_else(|| "이름 없음".into()),
-            "command:adapter",
-        ),
+        Some(p) if abs(ws, &p.adapter).is_file() && has_map => {
+            // What was found, so finishing the step shows its result.
+            let found = std::fs::read_to_string(ws.join("map/product-map.json"))
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .map(|m| {
+                    let features = m["features"].as_array().map_or(0, Vec::len);
+                    let screens: usize = m["features"]
+                        .as_array()
+                        .map(|f| {
+                            f.iter()
+                                .map(|x| x["screens"].as_array().map_or(0, Vec::len))
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    format!(" · 기능 {features}개, 화면 {screens}개")
+                })
+                .unwrap_or_default();
+            step(
+                "product",
+                "코드 읽고 제품 파악",
+                true,
+                format!(
+                    "{}{found}",
+                    p.name.clone().unwrap_or_else(|| "이름 없음".into())
+                ),
+                "command:adapter",
+            )
+        }
         Some(p) if abs(ws, &p.adapter).is_file() => step(
             "product",
             "코드 읽고 제품 파악",
@@ -449,6 +471,13 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
             "사이트와 계정",
             false,
             "촬영할 사이트 주소와 계정을 정합니다".into(),
+            "settings",
+        ),
+        Some((name, user, url)) if user.trim().is_empty() => step(
+            "account",
+            "사이트와 계정",
+            false,
+            format!("{name}: 주소({url})는 정했습니다. 아이디와 비밀번호를 넣으세요"),
             "settings",
         ),
         Some((name, user, url)) => {
