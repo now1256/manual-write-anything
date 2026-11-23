@@ -290,6 +290,12 @@ pub trait Host: Send + Sync + 'static {
         let _ = (feature, image, upload);
         Err("이 화면에서는 그림 올리기를 지원하지 않습니다".into())
     }
+    /// Looks around an SSH server for a code source (D-054): containers, ports, the folder, and
+    /// addresses the product may be served at. Read only.
+    async fn probe_source(&self, source: serde_json::Value) -> Result<serde_json::Value, String> {
+        let _ = source;
+        Err("이 화면에서는 SSH 서버 살펴보기를 지원하지 않습니다".into())
+    }
     /// A person's instruction for shooting one scene (`None` clears it).
     fn set_scene_instruction(
         &self,

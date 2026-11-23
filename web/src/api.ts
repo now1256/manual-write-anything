@@ -245,7 +245,7 @@ export interface ProjectList {
 export const fetchProjects = () => getJson<ProjectList>("/api/projects");
 
 export interface Settings {
-  sources: { name: string; path: string; git: string; branch: string }[];
+  sources: { name: string; path: string; git: string; branch: string; ssh?: string; jump?: string; docker?: string; remote_path?: string }[];
   product: { name: string; adapter: string; frontend: string; backend: string; openapi: string } | null;
   profiles: { name: string; base_url: string; user_id: string; purpose: string }[];
   capture: { profile: string; domain: string; viewport: [number, number]; scale: number; node: string } | null;
@@ -615,6 +615,32 @@ export async function setSceneUpload(feature: string, image: string, file: File 
 
 export const setSceneChoice = (feature: string, image: string, choice: string | null) =>
   postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/choice`, { image, choice });
+
+/** What an SSH server holds (서버 살펴보기). */
+export interface SourceProbe {
+  containers: { name: string; image: string; ports: string }[];
+  ports: number[];
+  path_ok: boolean;
+  entries: string[];
+  urls: [string, string][];
+}
+
+export interface SshPlace {
+  ssh: string;
+  jump: string;
+  docker: string;
+  remote_path: string;
+}
+
+export const probeSource = (src: SshPlace) => postJson<SourceProbe>("/api/sources/probe", src);
+/** Checks the route; passwords typed for hops are tried once and saved when it works. */
+export const sshCheck = (src: SshPlace, passwords: { hop: string; password: string }[] = []) =>
+  postJson<{ who: string; saved: number }>("/api/sources/probe", { ...src, action: "check", passwords });
+export const sshList = (src: SshPlace, path: string) =>
+  postJson<{ entries: { name: string; dir: boolean }[] }>("/api/sources/probe", { ...src, action: "ls", path });
+export const sshGuess = (src: SshPlace) =>
+  postJson<{ found: { path: string; kind: string }[] }>("/api/sources/probe", { ...src, action: "guess" });
+export const sshKey = () => postJson<{ public_key: string }>("/api/sources/probe", { action: "key" });
 
 export const setSceneInstruction = (feature: string, image: string, instruction: string | null) =>
   postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/instruction`, { image, instruction });

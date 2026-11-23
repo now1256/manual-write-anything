@@ -787,3 +787,46 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .cross-pick { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; color: var(--muted); }
 .scene-instr { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .scene-instr input { flex: 1; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--fg); font-size: 13px; }
+.probe { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); margin-top: 4px; }
+.probe .chip { margin: 2px 4px 2px 0; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; font-size: 12px; }
+.ok-text { color: var(--ok); }
+.err-text { color: var(--err); }
+
+/* SSH code source */
+.ssh { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.ssh-route { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 10px; border-radius: 8px; background: var(--panel-2); font-size: 12px; }
+.ssh-route .hop { white-space: nowrap; }
+.ssh-route .me { font-weight: 600; }
+.ssh-route .box { color: var(--accent); }
+.ssh-step { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ssh-step h4 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.ssh-step .no { display: inline-flex; width: 20px; height: 20px; border-radius: 50%; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-ink); font-size: 12px; }
+.ssh-target { display: flex; align-items: flex-end; gap: 6px; }
+.ssh-target label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.ssh-target .grow { flex: 1; }
+.ssh-target .at { padding-bottom: 6px; color: var(--muted); }
+.ssh-hops { display: flex; flex-direction: column; gap: 4px; }
+.ssh-hop { display: flex; gap: 6px; align-items: center; }
+.ssh-hop input { flex: 1; }
+.ssh-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ssh-actions .grow { flex: 1; }
+.ssh input { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--fg); }
+.ssh-help summary { cursor: pointer; font-size: 13px; }
+.ssh-key { white-space: pre-wrap; word-break: break-all; font-size: 11px; padding: 6px 8px; background: var(--panel-2); border-radius: 6px; margin: 4px 0; }
+.ssh-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.ssh-list li { padding: 3px 6px; border-radius: 6px; }
+.ssh-list li.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.ssh-browse { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; max-height: 260px; overflow: auto; }
+.ssh-browse-head { display: flex; gap: 8px; align-items: center; position: sticky; top: -6px; background: var(--panel); padding: 4px 0; }
+.ssh-browse ul { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.ssh-target .port { width: 90px; }
+.ssh-target .port input { width: 100%; }
+.ssh-hoprow { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 8px; border: 1px dashed var(--line); }
+.ssh-hoprow.ok { border-style: solid; border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.ssh-hoprow.bad { border-style: solid; border-color: color-mix(in srgb, var(--err) 50%, transparent); }
+.ssh-hoplabel { font-size: 12px; font-weight: 600; }
+.ssh-target .pw { width: 150px; }
+.ssh-target .pw input { width: 100%; }
+.ssh-target { flex-wrap: wrap; }
+.ssh-rest { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ssh-rest:disabled { opacity: .5; }

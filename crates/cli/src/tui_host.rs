@@ -952,18 +952,111 @@ impl Host for CliHost {
 
     fn set_password(&self, profile: &str, password: &str) -> Result<(), String> {
         use mwa_capture::creds::{CredStore, key};
-        let p =
-            self.cfg.profiles.get(profile).ok_or_else(|| {
-                format!("프로파일 '{profile}'이 없습니다. 먼저 설정을 저장하세요")
-            })?;
         if password.is_empty() {
             return Err("비밀번호가 비어 있습니다".into());
         }
+        // A login profile, or an SSH code source by its name.
+        let k = match self.cfg.profiles.get(profile) {
+            Some(p) => key(&p.user_id, &p.base_url),
+            None => {
+                let target = self
+                    .cfg
+                    .sources
+                    .iter()
+                    .find(|s| s.name == profile)
+                    .and_then(|s| s.ssh.clone())
+                    .ok_or_else(|| {
+                        format!(
+                            "프로파일이나 SSH 소스 '{profile}'이 없습니다. 먼저 설정을 저장하세요"
+                        )
+                    })?;
+                crate::ssh_cred_key(&mwa_source::remote::who(&target))
+            }
+        };
         let mut store = CredStore::default_path()
             .and_then(|path| CredStore::open(&path))
             .map_err(|e| e.to_string())?;
-        store.set_password(&key(&p.user_id, &p.base_url), password.to_string());
+        store.set_password(&k, password.to_string());
         store.save().map_err(|e| e.to_string())
+    }
+
+    async fn probe_source(&self, source: serde_json::Value) -> Result<serde_json::Value, String> {
+        use mwa_source::remote;
+        let text = |k: &str| source[k].as_str().unwrap_or("").trim().to_string();
+        let action = text("action");
+        let data = crate::projects::data_dir();
+        // mwa's own key: shown so a person can put it on the servers.
+        if action == "key" {
+            return remote::ensure_key(&data)
+                .map(|k| serde_json::json!({ "public_key": k }))
+                .map_err(|e| e.to_string());
+        }
+        let (target, docker, path) = (text("ssh"), text("docker"), text("remote_path"));
+        if target.is_empty() {
+            return Err("접속할 서버(사용자@주소)를 적으세요".into());
+        }
+        let jump: Vec<String> = text("jump")
+            .split(',')
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .collect();
+        let at = text("path");
+        // Passwords typed just now (not saved yet) go first; saved ones fill the rest.
+        let typed: Vec<(String, String)> = source["passwords"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|p| {
+                        let hop = p["hop"].as_str()?.trim();
+                        let pw = p["password"].as_str()?;
+                        (!hop.is_empty() && !pw.is_empty())
+                            .then(|| (mwa_source::remote::who(hop), pw.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        tokio::task::spawn_blocking(move || {
+            let mut pw = typed.clone();
+            for (w, p) in crate::ssh_passwords(&target, &jump) {
+                if !pw.iter().any(|(x, _)| *x == w) {
+                    pw.push((w, p));
+                }
+            }
+            let kh = remote::known_hosts(&data);
+            let r = remote::Remote {
+                target: &target,
+                jump: &jump,
+                docker: (!docker.is_empty()).then_some(docker.as_str()),
+                path: if path.is_empty() { "." } else { &path },
+                passwords: &pw,
+                known_hosts: &kh,
+            };
+            let v = match action.as_str() {
+                "check" => remote::check(&r).map(|who| {
+                    // It worked: the passwords typed for it were right; keep them.
+                    if !typed.is_empty()
+                        && let Ok(mut store) = mwa_capture::creds::CredStore::default_path()
+                            .and_then(|p| mwa_capture::creds::CredStore::open(&p))
+                    {
+                        for (w, p) in &typed {
+                            store.set_password(&crate::ssh_cred_key(w), p.clone());
+                        }
+                        let _ = store.save();
+                    }
+                    serde_json::json!({ "who": who, "saved": typed.len() })
+                }),
+                "ls" => remote::list_dir(&r, if at.is_empty() { "/" } else { &at }).map(|e| {
+                    serde_json::json!({ "entries": e.into_iter().map(|(n, d)| serde_json::json!({ "name": n, "dir": d })).collect::<Vec<_>>() })
+                }),
+                "guess" => remote::guess(&r).map(|f| {
+                    serde_json::json!({ "found": f.into_iter().map(|(p, k)| serde_json::json!({ "path": p, "kind": k })).collect::<Vec<_>>() })
+                }),
+                _ => remote::probe(&r).map(|p| serde_json::to_value(p).unwrap_or_default()),
+            };
+            v.map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     async fn install_browser(&self, progress: OnDelta) -> Result<Vec<String>, String> {

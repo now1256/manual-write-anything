@@ -10,7 +10,7 @@ interface Props {
 }
 
 const COMMAND_LABEL: Record<string, string> = {
-  sync: "Git 소스 받기",
+  sync: "소스 받기",
   map: "지도 만들기",
   adapter: "코드 읽고 어댑터 만들기",
   shot: "첫 화면 촬영",

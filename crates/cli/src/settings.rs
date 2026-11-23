@@ -52,6 +52,16 @@ pub struct SourceView {
     pub git: String,
     #[serde(default)]
     pub branch: String,
+    /// SSH server holding the code (`user@host`); empty for folders and Git.
+    #[serde(default)]
+    pub ssh: String,
+    /// Jump hosts, comma-separated in the form.
+    #[serde(default)]
+    pub jump: String,
+    #[serde(default)]
+    pub docker: String,
+    #[serde(default)]
+    pub remote_path: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -120,6 +130,10 @@ pub fn read(ws: &Path) -> Result<Settings, String> {
                 path: s.path.display().to_string(),
                 git: s.git.clone().unwrap_or_default(),
                 branch: s.branch.clone().unwrap_or_default(),
+                ssh: s.ssh.clone().unwrap_or_default(),
+                jump: s.jump.join(", "),
+                docker: s.docker.clone().unwrap_or_default(),
+                remote_path: s.remote_path.clone().unwrap_or_default(),
             })
             .collect(),
         product: cfg.product.as_ref().map(|p| ProductView {
@@ -227,6 +241,20 @@ pub fn apply(text: &str, s: &Settings) -> Result<String, String> {
         set_or_remove(&mut t, "path", &src.path);
         set_or_remove(&mut t, "git", &src.git);
         set_or_remove(&mut t, "branch", &src.branch);
+        set_or_remove(&mut t, "ssh", &src.ssh);
+        set_or_remove(&mut t, "docker", &src.docker);
+        set_or_remove(&mut t, "remote_path", &src.remote_path);
+        let hops: Vec<&str> = src
+            .jump
+            .split(',')
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+            .collect();
+        if hops.is_empty() || src.ssh.trim().is_empty() {
+            t.remove("jump");
+        } else {
+            t["jump"] = value(hops.into_iter().collect::<Array>());
+        }
         sources.push(t);
     }
     if sources.is_empty() {
@@ -359,9 +387,15 @@ fn missing(s: &Settings) -> Option<String> {
         if src.name.trim().is_empty() {
             return Some(format!("{}번째 코드 소스의 이름을 적으세요", i + 1));
         }
-        if src.path.trim().is_empty() && src.git.trim().is_empty() {
+        if src.path.trim().is_empty() && src.git.trim().is_empty() && src.ssh.trim().is_empty() {
             return Some(format!(
-                "코드 소스 '{}'의 폴더나 Git 주소를 적으세요",
+                "코드 소스 '{}'의 폴더, Git 주소, SSH 서버 중 하나를 적으세요",
+                src.name
+            ));
+        }
+        if !src.ssh.trim().is_empty() && src.remote_path.trim().is_empty() {
+            return Some(format!(
+                "코드 소스 '{}'의 SSH 서버 폴더를 적으세요",
                 src.name
             ));
         }

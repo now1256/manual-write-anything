@@ -852,11 +852,30 @@ fn reference_cmd(ws: &Path, action: RefCmd) -> Result<ExitCode> {
 /// Clones or updates every `[[source]]` that has `git`; one result line per source.
 fn sync_sources(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String>> {
     let git: Vec<_> = cfg.sources.iter().filter(|s| s.git.is_some()).collect();
+    let ssh: Vec<_> = cfg.sources.iter().filter(|s| s.ssh.is_some()).collect();
     anyhow::ensure!(
-        !git.is_empty(),
-        "git으로 지정한 소스가 없습니다. mwa.toml의 [[source]]에 git = \"주소\"를 적으세요"
+        !git.is_empty() || !ssh.is_empty(),
+        "Git이나 SSH 서버로 지정한 소스가 없습니다 (설정 → 코드 소스)"
     );
     let mut out = Vec::new();
+    for s in ssh {
+        let target = s.ssh.as_deref().expect("filtered");
+        progress(format!("{}: {target} 에서 받는 중…", s.name));
+        let pw = ssh_passwords(target, &s.jump);
+        let kh = mwa_source::remote::known_hosts(&crate::projects::data_dir());
+        let r = mwa_source::remote::Remote {
+            target,
+            jump: &s.jump,
+            docker: s.docker.as_deref(),
+            path: s.remote_path.as_deref().unwrap_or_default(),
+            passwords: &pw,
+            known_hosts: &kh,
+        };
+        out.push(match mwa_source::remote::sync(&r, &s.path) {
+            Ok(msg) => format!("{}: {msg}", s.name),
+            Err(e) => format!("{}: 실패 — {e}", s.name),
+        });
+    }
     for s in git {
         let url = s.git.as_deref().expect("filtered");
         progress(format!("{}: {url} 동기화 중…", s.name));
@@ -868,6 +887,30 @@ fn sync_sources(cfg: &Config, progress: impl Fn(String)) -> Result<Vec<String>> 
         );
     }
     Ok(out)
+}
+
+/// Saved SSH passwords for every hop on the way (only where no key works), as `(user@host,
+/// password)`.
+pub(crate) fn ssh_passwords(target: &str, jump: &[String]) -> Vec<(String, String)> {
+    use mwa_capture::creds::CredStore;
+    let Ok(store) = CredStore::default_path().and_then(|p| CredStore::open(&p)) else {
+        return Vec::new();
+    };
+    jump.iter()
+        .map(String::as_str)
+        .chain([target])
+        .filter_map(|hop| {
+            let who = mwa_source::remote::who(hop);
+            let pw = store.get(&ssh_cred_key(&who))?.password.clone();
+            (!pw.is_empty()).then_some((who, pw))
+        })
+        .collect()
+}
+
+/// Where an SSH hop's password is kept in the user's credentials file.
+pub(crate) fn ssh_cred_key(who: &str) -> String {
+    let (user, host) = who.rsplit_once('@').unwrap_or(("", who));
+    mwa_capture::creds::key(user, &format!("ssh://{host}"))
 }
 
 fn snapshots(cfg: &Config) -> Vec<(String, Result<Snapshot, String>)> {

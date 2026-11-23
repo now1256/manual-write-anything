@@ -116,6 +116,7 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
         )
         .route("/api/manuals", get(manuals_status))
         .route("/api/automation", get(automation).put(save_automation))
+        .route("/api/sources/probe", axum::routing::post(probe_source))
         .route(
             "/api/docs/{feature}/restore/{n}",
             axum::routing::post(restore_document),
@@ -537,6 +538,13 @@ async fn document_version(
 
 async fn manuals_status(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {
     Json(hub.host().manuals_status())
+}
+
+async fn probe_source(State(hub): State<Arc<Hub>>, Json(b): Json<serde_json::Value>) -> Response {
+    match hub.host().probe_source(b).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
 }
 
 async fn automation(State(hub): State<Arc<Hub>>) -> Json<serde_json::Value> {

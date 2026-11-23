@@ -165,6 +165,19 @@ pub struct SourceCfg {
     /// Branch to follow (default: the remote's default branch).
     #[serde(default)]
     pub branch: Option<String>,
+    /// Code on another machine over SSH (D-054): `user@host`. The copy lives in
+    /// `.mwa/sources/<name>` unless `path` says otherwise.
+    #[serde(default)]
+    pub ssh: Option<String>,
+    /// Jump hosts on the way, in order (`ssh -J`).
+    #[serde(default)]
+    pub jump: Vec<String>,
+    /// Container on that host holding the code (`docker exec`).
+    #[serde(default)]
+    pub docker: Option<String>,
+    /// The code's folder on the host, or inside the container.
+    #[serde(default)]
+    pub remote_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -397,7 +410,7 @@ impl Config {
     /// Makes source paths absolute against the project folder `ws`.
     pub fn resolve_paths(&mut self, ws: &std::path::Path) {
         for s in &mut self.sources {
-            if s.path.as_os_str().is_empty() && s.git.is_some() {
+            if s.path.as_os_str().is_empty() && (s.git.is_some() || s.ssh.is_some()) {
                 s.path = std::path::Path::new(".mwa/sources").join(&s.name);
             }
             if s.path.is_relative() {
@@ -433,9 +446,15 @@ impl Config {
 
         let mut seen = std::collections::BTreeSet::new();
         for s in &self.sources {
-            if s.path.as_os_str().is_empty() && s.git.is_none() {
+            if s.ssh.is_some() && s.remote_path.as_deref().is_none_or(|p| p.trim().is_empty()) {
                 return Err(ConfigError::Parse(format!(
-                    "소스 '{}'에 path나 git 중 하나가 필요합니다",
+                    "소스 '{}'에 SSH 서버의 폴더(remote_path)가 필요합니다",
+                    s.name
+                )));
+            }
+            if s.path.as_os_str().is_empty() && s.git.is_none() && s.ssh.is_none() {
+                return Err(ConfigError::Parse(format!(
+                    "소스 '{}'에 path, git, ssh 중 하나가 필요합니다",
                     s.name
                 )));
             }

@@ -3,6 +3,7 @@ import { checkField, fetchSettings, saveSettings, setPassword, type Settings } f
 import Checked from "./Checked";
 import PathPicker from "./PathPicker";
 import ReferenceSettings from "./ReferenceSettings";
+import SshSourceForm from "./SshSourceForm";
 
 type Picker = { mode: "dir" | "file"; ext?: string; start?: string; onPick: (p: string) => void };
 
@@ -32,7 +33,8 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
   const [pw, setPw] = useState<Record<string, string>>({});
   const [picker, setPicker] = useState<Picker | null>(null);
   // Per source row: connect by local folder or by git (clone).
-  const [gitMode, setGitMode] = useState<Record<number, boolean>>({});
+  /** How each code source is reached. */
+  const [mode, setMode] = useState<Record<number, "folder" | "git" | "ssh">>({});
   const [dirty, setDirty] = useState(false);
   const [closing, setClosing] = useState(false);
 
@@ -40,7 +42,7 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
     fetchSettings()
       .then((v) => {
         setS(v);
-        setGitMode(Object.fromEntries(v.sources.map((x, i) => [i, !!x.git && !x.path])));
+        setMode(Object.fromEntries(v.sources.map((x, i) => [i, x.ssh ? "ssh" : x.git && !x.path ? "git" : "folder"])));
       })
       .catch((e) => setError(String(e.message ?? e)));
   }, []);
@@ -138,12 +140,19 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
             <div className="source-row">
               <input className="name" placeholder="이름 (예: frontend)" value={src.name} onChange={(e) => update((d) => (d.sources[i].name = e.target.value))} />
               <div className="seg">
-                <button className={!gitMode[i] ? "on" : ""} onClick={() => setGitMode((m) => ({ ...m, [i]: false }))}>폴더</button>
-                <button className={gitMode[i] ? "on" : ""} onClick={() => setGitMode((m) => ({ ...m, [i]: true }))}>Git</button>
+                <button className={(mode[i] ?? "folder") === "folder" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "folder" }))}>폴더</button>
+                <button className={mode[i] === "git" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "git" }))}>Git</button>
+                <button className={mode[i] === "ssh" ? "on" : ""} onClick={() => setMode((m) => ({ ...m, [i]: "ssh" }))}>SSH 서버</button>
               </div>
               <button title="삭제" onClick={() => update((d) => d.sources.splice(i, 1))}>✕</button>
             </div>
-            {!gitMode[i] ? (
+            {mode[i] === "ssh" ? (
+              <SshSourceForm
+                place={{ ssh: src.ssh ?? "", jump: src.jump ?? "", docker: src.docker ?? "", remote_path: src.remote_path ?? "" }}
+                onChange={(p) => update((d) => { Object.assign(d.sources[i], p); d.sources[i].git = ""; d.sources[i].path = ""; })}
+                onAddSite={(u) => update((d) => d.profiles.push({ name: `site${d.profiles.length + 1}`, base_url: u, user_id: "", purpose: "capture" }))}
+              />
+            ) : mode[i] !== "git" ? (
               <>
                 <div className="source-row">
                   <input className="grow" placeholder="/코드/폴더/경로" value={src.path} onChange={(e) => update((d) => ((d.sources[i].path = e.target.value), (d.sources[i].git = "")))} />
@@ -164,7 +173,7 @@ export default function SettingsView({ focus, onClose, onCommand }: Props) {
         ))}
         <div className="settings-actions">
           <button onClick={() => { update((d) => d.sources.push({ name: "", path: "", git: "", branch: "" })); }}>소스 추가</button>
-          {s.sources.some((x) => x.git) && <button onClick={() => onCommand("sync")}>Git 소스 받기 (/sync, 저장 후)</button>}
+          {s.sources.some((x) => x.git || x.ssh) && <button onClick={() => onCommand("sync")}>소스 받기 (Git·SSH, 저장 후)</button>}
         </div>
       </section>
       )}

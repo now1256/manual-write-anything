@@ -342,7 +342,7 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
     let git_missing = cfg
         .sources
         .iter()
-        .any(|s| s.git.is_some() && !s.path.is_dir());
+        .any(|s| (s.git.is_some() || s.ssh.is_some()) && !s.path.is_dir());
     out.push(if cfg.sources.is_empty() {
         step(
             "code",
@@ -356,7 +356,10 @@ pub fn steps(ws: &Path, cfg: &Config) -> Vec<SetupStep> {
             "code",
             "코드 연결",
             false,
-            format!("Git 소스를 아직 받지 않았습니다: {}", missing.join(", ")),
+            format!(
+                "Git·SSH 소스를 아직 받지 않았습니다: {}",
+                missing.join(", ")
+            ),
             "command:sync",
         )
     } else if !missing.is_empty() {

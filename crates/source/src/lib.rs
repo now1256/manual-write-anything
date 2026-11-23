@@ -1,10 +1,12 @@
 //! Source connection (FS). Every input becomes a git checkout pinned to a commit SHA.
-//! M0 implements local paths only; remote mirrors and uploads arrive with M7.
+//! Local paths, Git clones, and copies of code on other machines over SSH (`remote`).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+
+pub mod remote;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
