@@ -9,6 +9,7 @@ import {
   docAssetUrl,
   setSceneUpload,
   setSceneChoice,
+  setSceneInstruction,
   shotUrl,
   type RefDoc,
   type RefImage,
@@ -62,12 +63,17 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
   /** Choices and uploads save at once; this tells the user it happened. */
   const [saved, setSaved] = useState<string | null>(null);
   const done = (what: string) => setSaved(`${what} · ${new Date().toLocaleTimeString("ko-KR")}`);
-  const shoot = (image?: string, quick = false) => {
-    const flags = [demo && "demo", quick && "quick"].filter(Boolean).join("&");
-    onCommand("shotref", `${featureKey}${image ? `|${image}` : ""}${flags ? `?${flags}` : ""}`);
+  const shoot = (image?: string) =>
+    onCommand("shotref", `${featureKey}${image ? `|${image}` : ""}${demo ? "?demo" : ""}`);
+  const instruct = async (image: string, text: string) => {
+    try {
+      setErr("");
+      setShots(await setSceneInstruction(featureKey, image, text.trim() || null));
+      done(text.trim() ? "촬영 지시를 저장했습니다" : "촬영 지시를 지웠습니다");
+    } catch (x) {
+      setErr(String((x as Error).message ?? x));
+    }
   };
-  /** Scenes with a plan that worked before: the quick re-shoot replays them. */
-  const planned = shots?.scenes.filter((s) => s.plan).length ?? 0;
   const choose = async (image: string, choice: string | null) => {
     try {
       setErr("");
@@ -162,15 +168,6 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
         >
           {shots ? "장면 전체 다시 찍기" : "기존 매뉴얼 장면 찍기"}
         </button>
-        {planned > 0 && (
-          <button
-            className="btn"
-            title="저장된 촬영 계획을 그대로 다시 실행해 한 번씩만 찍습니다. 모델을 부르지 않고 대조도 생략해 빠릅니다. 자르기·크기를 확인할 때 씁니다"
-            onClick={() => shoot(undefined, true)}
-          >
-            빠르게 다시 찍기 ({planned}장)
-          </button>
-        )}
       </div>
       {shots && (
         <div className="ref-summary">
@@ -224,6 +221,11 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
                       <div className="none">{shotOf(img) ? "못 찍음" : "아직 안 찍음"}</div>
                     )}
                   </figure>
+                  <InstructionBox
+                    value={shotOf(img)?.instruction ?? ""}
+                    onSave={(t) => instruct(img.file, t)}
+                    onShoot={() => shoot(img.file)}
+                  />
                 </div>
               ) : (
                 <div>
@@ -364,6 +366,46 @@ function Trace({ s, takenAt }: { s: SceneShot; takenAt: number }) {
 /** Screens (whole or cut) can be taken again; drawn flows, diagrams and icons cannot. */
 const shootable = (img: RefImage) =>
   !!img.scene && (img.scene.capture || !["flow", "diagram", "icon"].includes(img.scene.kind));
+
+/**
+ * A person's instruction for one scene (D-053): the planner follows it before the general rules.
+ * Writes stay blocked whatever it says.
+ */
+function InstructionBox({ value, onSave, onShoot }: { value: string; onSave: (t: string) => Promise<void>; onShoot: () => void }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  const changed = text.trim() !== value;
+  return (
+    <div className="scene-instr">
+      <input
+        placeholder="촬영 지시 (선택) — 예: 비활성 상태인 행으로 열어 줘 / 연결 정보 부분만"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        title="이 장면을 찍을 때 다른 규칙보다 먼저 따릅니다. 저장·삭제처럼 실제로 바꾸는 동작은 지시해도 막힙니다"
+      />
+      {changed && (
+        <button className="btn small" onClick={() => void onSave(text)}>
+          저장
+        </button>
+      )}
+      <button
+        className="btn small primary"
+        disabled={!text.trim()}
+        onClick={async () => {
+          if (changed) await onSave(text);
+          onShoot();
+        }}
+      >
+        지시대로 다시 찍기
+      </button>
+      {value && (
+        <button className="link small" onClick={() => void onSave("")}>
+          지우기
+        </button>
+      )}
+    </div>
+  );
+}
 
 /** Per-scene fixes: shoot this scene again, or upload a picture in its place. */
 function SceneActions({ shot, onShoot, onUpload }: { shot?: SceneShot; onShoot?: () => void; onUpload: (f: File | null) => void }) {

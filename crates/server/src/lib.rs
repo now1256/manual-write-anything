@@ -124,6 +124,10 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
             "/api/references/shots/{feature}/choice",
             axum::routing::post(scene_choice),
         )
+        .route(
+            "/api/references/shots/{feature}/instruction",
+            axum::routing::post(scene_instruction),
+        )
         .route("/api/references/link", axum::routing::post(link_reference))
         .route(
             "/api/references/upload",
@@ -665,6 +669,27 @@ async fn scene_choice(
     Json(b): Json<SceneChoice>,
 ) -> Response {
     match hub.host().set_scene_choice(&feature, &b.image, b.choice) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SceneInstruction {
+    image: String,
+    #[serde(default)]
+    instruction: Option<String>,
+}
+
+async fn scene_instruction(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<SceneInstruction>,
+) -> Response {
+    match hub
+        .host()
+        .set_scene_instruction(&feature, &b.image, b.instruction)
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => bad_request(&e),
     }

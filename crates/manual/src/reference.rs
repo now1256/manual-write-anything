@@ -714,6 +714,9 @@ pub struct SceneShot {
     /// Picture chosen for the new manual (see `set_scene_choice`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<String>,
+    /// A person's instruction for shooting this scene, followed before the general rules (D-053).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
 }
 
 /// One try at a scene: the steps as planned and how each went.
@@ -840,6 +843,7 @@ pub fn merge_scene_shots(ws: &Path, mut new: SceneShots) -> SceneShots {
             if let Some(o) = old.scenes.iter().find(|o| o.image == s.image) {
                 s.uploaded.clone_from(&o.uploaded);
                 s.choice.clone_from(&o.choice);
+                s.instruction.clone_from(&o.instruction);
             }
         }
         for o in old.scenes {
@@ -896,6 +900,25 @@ pub fn set_scene_choice(
     edit_scene(ws, feature, image, |s| s.choice = choice)
 }
 
+/// Sets (or clears) a person's instruction for shooting one scene. The saved plan is dropped:
+/// the next shot plans again with the instruction.
+pub fn set_scene_instruction(
+    ws: &Path,
+    feature: &str,
+    image: &str,
+    instruction: Option<String>,
+) -> Result<SceneShots, ManualError> {
+    let instruction = instruction
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    edit_scene(ws, feature, image, |s| {
+        if s.instruction != instruction {
+            s.plan = None;
+        }
+        s.instruction = instruction;
+    })
+}
+
 /// Changes one scene's record, creating a "not taken" one for pictures never shot.
 fn edit_scene(
     ws: &Path,
@@ -940,6 +963,7 @@ fn edit_scene(
             mocked: Vec::new(),
             uploaded: None,
             choice: None,
+            instruction: None,
         });
     }
     change(

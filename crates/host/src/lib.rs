@@ -290,6 +290,16 @@ pub trait Host: Send + Sync + 'static {
         let _ = (feature, image, upload);
         Err("이 화면에서는 그림 올리기를 지원하지 않습니다".into())
     }
+    /// A person's instruction for shooting one scene (`None` clears it).
+    fn set_scene_instruction(
+        &self,
+        feature: &str,
+        image: &str,
+        instruction: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let _ = (feature, image, instruction);
+        Err("이 화면에서는 촬영 지시를 지원하지 않습니다".into())
+    }
     /// Chooses which picture the new manual uses for one scene (`None` = automatic).
     fn set_scene_choice(
         &self,

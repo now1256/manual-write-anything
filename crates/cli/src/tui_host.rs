@@ -426,6 +426,18 @@ impl Host for CliHost {
         Ok(serde_json::to_value(shots).unwrap_or_default())
     }
 
+    fn set_scene_instruction(
+        &self,
+        feature: &str,
+        image: &str,
+        instruction: Option<String>,
+    ) -> Result<serde_json::Value, String> {
+        let shots =
+            mwa_manual::reference::set_scene_instruction(&self.ws, feature, image, instruction)
+                .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_value(shots).unwrap_or_default())
+    }
+
     fn link_reference(&self, feature: &str, id: &str) -> Result<(), String> {
         // An empty id unpairs the feature.
         if id.is_empty() {

@@ -271,7 +271,9 @@ pub struct Infeasible {
 }
 
 const SCENE_RULES: &str = " You are also given, for each todo, a picture of that screen from an older \
-manual. Reproduce the same screen and the same part of it in the current product: the same page, dialog, \
+manual. A todo may end with [사람의 지시: …], a person's instruction for that scene: follow it before \
+every rule here except the safety ones (never press buttons that commit, writes stay blocked). \
+Reproduce the same screen and the same part of it in the current product: the same page, dialog, \
 drawer, tab or confirmation, cut to the same area. The content need not match the old picture (it is a \
 manual, not a copy): never type the old picture's example text into fields, open forms with the record's \
 own values, and a dialog shown for several selected rows needs only one selected; use the current data's \

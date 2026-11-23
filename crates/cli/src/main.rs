@@ -1879,13 +1879,28 @@ async fn capture_reference(
             return Ok(shots);
         }
         let pctx = planner_context(ws, &ctx, &w, f, sc, &job).await?;
+        // A person's instruction for a scene goes with it to the planner (D-053).
+        let saved = reference::load_scene_shots(ws, feature);
+        let instruction = |file: &str| {
+            saved
+                .as_ref()?
+                .scenes
+                .iter()
+                .find(|s| s.image == file)?
+                .instruction
+                .clone()
+        };
         let todos: Vec<SceneTodo> = targets
             .iter()
             .map(|(n, img)| {
                 let s = img.scene.as_ref().expect("filtered");
+                let what = format!("{} — {}", s.screen, s.state);
                 SceneTodo {
                     id: id_of(*n, img),
-                    what: format!("{} — {}", s.screen, s.state),
+                    what: match instruction(&img.file) {
+                        Some(i) => format!("{what} [사람의 지시: {i}]"),
+                        None => what,
+                    },
                     how: s.how.clone(),
                     image: Some(ref_dir.join(&img.file)),
                 }
@@ -1931,6 +1946,7 @@ async fn capture_reference(
                 mocked: Vec::new(),
                 uploaded: None,
                 choice: None,
+                instruction: None,
             };
             if let Some(why) = infeasible.get(&id) {
                 shot.reason_kind = Some(why.kind.clone());

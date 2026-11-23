@@ -342,6 +342,8 @@ export interface SceneShot {
   changes?: string[];
   /** The capture plan that was used (replayed by the quick re-shoot). */
   plan?: unknown;
+  /** A person's instruction for shooting this scene. */
+  instruction?: string | null;
   file?: string;
   data?: string;
   /** First plan, then each re-plan. */
@@ -613,6 +615,9 @@ export async function setSceneUpload(feature: string, image: string, file: File 
 
 export const setSceneChoice = (feature: string, image: string, choice: string | null) =>
   postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/choice`, { image, choice });
+
+export const setSceneInstruction = (feature: string, image: string, instruction: string | null) =>
+  postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/instruction`, { image, instruction });
 
 export const linkReference = (feature: string, id: string) => postJson<{ ok: boolean }>("/api/references/link", { feature, id });
 

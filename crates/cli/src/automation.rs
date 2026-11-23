@@ -472,10 +472,29 @@ async fn steps(
         }
         if rule.reshoot && cfg.capture.is_some() {
             say("그림 다시 찍는 중");
-            if mwa_manual::reference::for_feature(ws, f).is_some()
-                && let Err(e) = host.capture_reference(f, relay(progress)).await
-            {
-                note(format!("장면을 다시 찍지 못했습니다: {e}"));
+            if mwa_manual::reference::for_feature(ws, f).is_some() {
+                // Saved plans first (no model). Plan again when the code changed, a replay
+                // failed, or a person gave a scene a new instruction.
+                let full = rule.scope == "changed"
+                    || host
+                        .capture_reference(&format!("{f}?quick"), relay(progress))
+                        .await
+                        .is_err()
+                    || mwa_manual::reference::load_scene_shots(ws, f).is_none_or(|s| {
+                        s.scenes.iter().any(|x| {
+                            (x.plan.is_none() && x.instruction.is_some())
+                                || x.differences
+                                    .first()
+                                    .is_some_and(|d| d.starts_with("빠른 다시 찍기 실패"))
+                        })
+                    });
+                if full {
+                    if let Err(e) = host.capture_reference(f, relay(progress)).await {
+                        note(format!("장면을 다시 찍지 못했습니다: {e}"));
+                    }
+                } else {
+                    note("그림: 저장된 계획으로 다시 찍음 (모델 호출 없음)".into());
+                }
             }
             let slots: Vec<String> = mwa_manual::document::load(ws, f)
                 .map(|d| mwa_manual::document::picture_slots(&d.html))
