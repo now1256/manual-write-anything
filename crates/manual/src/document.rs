@@ -376,8 +376,11 @@ pub async fn import(
     let at = now();
     let mut html = String::new();
     let mut origin = Vec::new();
+    let _ = reference::relayout(ws, &rdoc.id);
+    let rdoc = reference::load(ws, &rdoc.id).unwrap_or(rdoc);
     for (k, (first, last, b)) in paged.into_iter().enumerate() {
         let bid = format!("b{k}");
+        let b = laid_out(&b, &rdoc);
         html.push_str(&crate::provenance::set_bid(&b, &bid));
         html.push('\n');
         let summary = if first == last {
@@ -735,6 +738,40 @@ pub fn attr_of(block: &str, name: &str) -> Option<String> {
 }
 
 /// The block with an attribute of its opening tag set (or removed with `None`).
+/// An old-manual picture as the old manual laid it out: its width and, when it stood beside
+/// others, its row. A width or row a person set already is kept.
+pub fn laid_out(block: &str, rdoc: &reference::RefDoc) -> String {
+    if !block.starts_with("<figure") {
+        return block.to_string();
+    }
+    let Some(img) =
+        attr_of(block, "data-ref").and_then(|r| rdoc.images.iter().find(|i| i.file == r))
+    else {
+        return block.to_string();
+    };
+    let mut b = block.to_string();
+    if attr_of(&b, "data-width").is_none()
+        && let Some(p) = img.pct.filter(|p| *p < 95)
+    {
+        b = set_attr(&b, "data-width", Some(&p.to_string()));
+    }
+    if attr_of(&b, "data-row").is_none()
+        && let Some(r) = img.row
+    {
+        b = set_attr(&b, "data-row", Some(&format!("{}-{r}", img.page)));
+    }
+    b
+}
+
+/// Every old-manual picture of `html` laid out as in the old manual (see `laid_out`).
+pub fn lay_out(html: &str, rdoc: &reference::RefDoc) -> String {
+    blocks(html)
+        .iter()
+        .map(|b| laid_out(b, rdoc))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn set_attr(block: &str, name: &str, value: Option<&str>) -> String {
     let mut b = block.to_string();
     if attr_of(block, name).is_some() {

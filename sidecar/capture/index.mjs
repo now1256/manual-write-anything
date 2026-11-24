@@ -1,16 +1,21 @@
 // mwa capture sidecar.
 // stdin: one job JSON. stdout: one JSON event per line ({type:"shot"|"done"|"fatal", ...}).
+// Explore mode (job.explore): one page stays open and further stdin lines are commands
+// ({cmd:"open"|"step"|"shot"|"end"}), each answered with {type:"obs"} (D-057).
 // Shared-stack safety (F0): every non-GET request to /api/* is aborted unless allow-listed,
 // and each blocked request is reported with the shot. Demo responses (job.mocks, D-028) are
 // answered inside the browser and never reach the server.
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { chromium } from "playwright";
 
 const emit = (ev) => process.stdout.write(JSON.stringify(ev) + "\n");
 
+// The job is the first line; in explore mode the commands follow.
+const stdinLines = createInterface({ input: process.stdin, crlfDelay: Infinity })[Symbol.asyncIterator]();
 async function readJob() {
-  let text = "";
-  for await (const chunk of process.stdin) text += chunk;
-  return JSON.parse(text);
+  const first = await stdinLines.next();
+  return JSON.parse(first.value ?? "{}");
 }
 
 // Also hides the Next.js dev-mode badge (`next dev` on the shared stack) so it never lands in a manual.
@@ -63,6 +68,7 @@ const dialogs = (page) => page.getByRole("dialog").or(page.getByRole("alertdialo
 const ROLE_KO = {
   button: "버튼", link: "링크", tab: "탭", row: "행", cell: "칸", checkbox: "체크박스", textbox: "입력칸",
   combobox: "선택 상자", option: "선택 항목", dialog: "창", alertdialog: "확인 창", heading: "제목", menuitem: "메뉴 항목",
+  text: "글자",
 };
 
 /** Plain-language reason for a failed step (shown to the user). */
@@ -90,8 +96,11 @@ async function locate(page, step) {
   if (step.within === "dialog" && (await dialogs(page).count()) > 0) scope = dialogs(page).last();
   // Row text joins cells without reliable spacing: match the words in order.
   if (step.row) scope = scope.getByRole("row").filter({ hasText: wordsInOrder(step.row) });
+  // role "text": visible text that is not a control (a paragraph a person clicks to edit it).
   const target = (s) =>
-    s.getByRole(step.role, step.name ? { name: step.name, exact: !!step.exact } : {});
+    step.role === "text"
+      ? s.getByText(step.name, { exact: !!step.exact })
+      : s.getByRole(step.role, step.name ? { name: step.name, exact: !!step.exact } : {});
   // `near`: the innermost block that contains both the text and the target (e.g. one card).
   if (step.near) {
     scope = scope
@@ -133,6 +142,10 @@ async function runStep(page, step, idle) {
     case "hover":
       await (await locate(page, step)).hover({ timeout: 5000 });
       break;
+    case "press":
+      // A key on the focused element (Escape closes a dropdown, Enter adds a tag).
+      await page.keyboard.press(step.value || "Enter");
+      break;
     case "wait": {
       let scope = page;
       if (step.within === "dialog" && (await dialogs(page).count()) > 0) scope = dialogs(page).last();
@@ -150,22 +163,97 @@ async function runStep(page, step, idle) {
 }
 
 /**
- * Area to cut out, in page coordinates: the smallest element holding every `region` text (an old
- * manual's crop), else the open dialog; widened to `ratio` (old picture's width / height).
+ * Lets the page grow to its whole content before a picture. App shells keep the header and the
+ * menu fixed and scroll only the body inside a fixed-height box, which would cut whatever lies
+ * below the fold out of every picture.
+ */
+async function unclip(page) {
+  await page.evaluate(() => {
+    const grown = new Set();
+    for (const el of document.querySelectorAll("body *")) {
+      const cs = getComputedStyle(el);
+      if (!/(auto|scroll)/.test(cs.overflowY) || el.scrollHeight <= el.clientHeight + 4) continue;
+      // A dialog keeps its place on screen; its body grows inside it.
+      for (let a = el; a && a !== document.body; a = a.parentElement) {
+        if (grown.has(a)) break;
+        grown.add(a);
+        if (getComputedStyle(a).position === "fixed" && a !== el) break;
+        a.style.setProperty("overflow-y", "visible", "important");
+        a.style.setProperty("height", "auto", "important");
+        a.style.setProperty("max-height", "none", "important");
+      }
+    }
+    for (const el of [document.documentElement, document.body]) {
+      el.style.setProperty("height", "auto", "important");
+      el.style.setProperty("overflow", "visible", "important");
+    }
+  });
+  await page.waitForTimeout(200);
+}
+
+/**
+ * Area to cut out, in page coordinates, so the picture shows the same part of the screen as the
+ * old one even when that part grew: the element holding every `region` text (a whole dialog when
+ * the texts fill most of it; otherwise the enclosing block shaped most like the old picture),
+ * else the open dialog, else the page's body column. Never the app's header or side menu, and
+ * nothing is cut: the old proportions only choose among whole blocks.
  */
 async function cutBox(page, shot) {
-  let box = null;
-  let found = false;
-  if (shot.region?.length) {
-    // A picture slot of a new manual (no old picture to match) shows a whole dialog or drawer.
-    const whole = !shot.ratio;
-    box = await page.evaluate(({ texts, whole }) => {
-      const norm = (t) => (t || "").replace(/\s+/g, "");
-      const want = texts.map(norm).filter(Boolean);
-      const shown = (el) => {
+  const box = await page.evaluate(({ texts, ratio, capture }) => {
+    const norm = (t) => (t || "").replace(/\s+/g, "");
+    const shown = (el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const rect = (el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+    };
+    const DIALOG = '[role="dialog"], [role="alertdialog"]';
+    // The app's top bar and side menu, found by where they sit (many apps mark them with plain
+    // divs): a low full-width band at the top, a narrow full-height band at the left.
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const band = (x, y, fits) => {
+      let el = document.elementFromPoint(x, y);
+      let out = null;
+      while (el && el !== document.body && el !== document.documentElement) {
         const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      };
+        if (!fits(r)) break;
+        out = r;
+        el = el.parentElement;
+      }
+      return out;
+    };
+    const top = band(vw / 2, 2, (r) => r.height < 160);
+    const side = band(2, Math.min(vh - 2, (top?.bottom ?? 0) + vh / 2), (r) => r.width < 320);
+    const topEdge = top && top.width > vw * 0.8 ? top.bottom + window.scrollY : 0;
+    const leftEdge = side && side.height > vh * 0.5 ? side.right + window.scrollX : 0;
+    // Growing past this would take in the app's side menu or top bar.
+    const tooFar = (from, a) => {
+      const r = rect(a);
+      return a === document.body || r.x < leftEdge - 2 || r.y < topEdge - 2;
+    };
+    const off = (r) => (ratio ? Math.abs(Math.log(r.width / r.height / ratio)) : 0);
+    // The enclosing block shaped most like the old picture, up to `limit` (a dialog) at most.
+    const shape = (el, limit) => {
+      const base = rect(el);
+      let pick = el;
+      let best = rect(el);
+      for (let a = el.parentElement, n = 0; a && n < 10 && !(limit ? !limit.contains(a) : tooFar(base, a)); a = a.parentElement) {
+        const ra = rect(a);
+        if (ra.width * ra.height <= best.width * best.height * 1.02) continue;
+        n++;
+        if (ratio && off(ra) < off(best) - 0.05) {
+          pick = a;
+          best = ra;
+        }
+      }
+      return pick;
+    };
+
+    const want = (texts || []).map(norm).filter(Boolean);
+    if (want.length) {
       // Input hints count as text: a search box shows its placeholder, not innerText.
       const textOf = (el) =>
         norm(el.innerText) +
@@ -181,30 +269,40 @@ async function cutBox(page, shot) {
         let el = st;
         while (el && !want.every((t) => holds(el, t))) el = el.parentElement;
         if (!el || el === document.body) continue;
-        if (whole) el = el.closest('[role="dialog"], [role="alertdialog"]') ?? el;
-        const r = el.getBoundingClientRect();
-        if (!best || r.width * r.height < best.width * best.height) {
-          best = { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+        const dialog = el.closest(DIALOG);
+        let pick;
+        if (dialog) {
+          const rd = rect(dialog);
+          const re = rect(el);
+          // Most of the dialog in the old picture: the whole dialog, title and buttons too.
+          pick = !ratio || re.width * re.height >= rd.width * rd.height * 0.5 ? dialog : shape(el, dialog);
+        } else {
+          pick = ratio ? shape(el, null) : el;
         }
+        const r = rect(pick);
+        if (!best || r.width * r.height < best.width * best.height) best = { ...r, found: true, topEdge };
       }
-      return best;
-    }, { texts: shot.region, whole });
-    found = !!box;
-  }
-  if (!box && shot.capture === "dialog") {
-    const b = await dialogs(page).last().boundingBox();
-    const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
-    if (b) box = { x: b.x + scroll.x, y: b.y + scroll.y, width: b.width, height: b.height };
-  }
-  if (!box && shot.ratio && shot.capture === "page") {
-    // Whole screen in the old picture: same proportions from the top.
-    const vp = page.viewportSize();
-    const scroll = await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
-    return {
-      box: { x: scroll.x, y: scroll.y, width: vp.width, height: Math.min(vp.height, vp.width / shot.ratio) },
-      found: false,
-    };
-  }
+      if (best) return best;
+    }
+    if (capture === "dialog") {
+      const ds = Array.from(document.querySelectorAll(DIALOG)).filter(shown);
+      if (ds.length) return { ...rect(ds[ds.length - 1]), found: false, topEdge: 0 };
+    }
+    if (capture === "page" && ratio) {
+      // The whole screen in the old picture: the body column, the largest block clear of the top
+      // bar and the side menu.
+      let el = document.elementFromPoint((leftEdge + vw) / 2, Math.min(vh - 2, topEdge + 48));
+      if (!el) return null;
+      const from = rect(el);
+      while (el.parentElement && !tooFar(from, el.parentElement)) el = el.parentElement;
+      const r = rect(el);
+      // An old picture of one screenful stays one screenful: a body column grown far below the
+      // fold (a side panel unrolled) is cut where the old picture ended.
+      if (r.height > (r.width / ratio) * 1.3) r.height = r.width / ratio;
+      return { ...r, found: false, topEdge };
+    }
+    return null;
+  }, { texts: shot.region ?? [], ratio: shot.ratio ?? 0, capture: shot.capture });
   if (!box) return null;
   const doc = await page.evaluate(() => ({
     w: document.documentElement.scrollWidth,
@@ -213,24 +311,12 @@ async function cutBox(page, shot) {
   // A picture slot is cut at the dialog's own edge; an old manual's picture had some margin.
   const pad = shot.ratio ? 8 : 1;
   let { x, y, width: w, height: h } = box;
-  x -= pad;
-  y -= pad;
-  w += pad * 2;
-  h += pad * 2;
-  if (shot.ratio) {
-    if (w / h < shot.ratio) {
-      const nw = Math.min(h * shot.ratio, doc.w);
-      x -= (nw - w) / 2;
-      w = nw;
-    } else {
-      const nh = Math.min(w / shot.ratio, doc.h);
-      y -= (nh - h) / 2;
-      h = nh;
-    }
-  }
-  x = Math.max(0, Math.min(x, doc.w - w));
-  y = Math.max(0, Math.min(y, doc.h - h));
-  return { box: { x, y, width: Math.min(w, doc.w), height: Math.min(h, doc.h) }, found };
+  x = Math.max(0, x - pad);
+  // The margin stops at the app's top bar (its shadow would show as a dark line).
+  y = Math.max(y >= box.topEdge ? box.topEdge : 0, y - pad);
+  w = Math.min(w + pad * 2, doc.w - x);
+  h = Math.min(h + pad * 2, doc.h - y);
+  return { box: { x, y, width: w, height: h }, found: box.found };
 }
 
 // Open overlays first: they render last in the DOM and would be cut from a long page snapshot.
@@ -273,6 +359,124 @@ function findMock(mocks, method, url) {
   return best;
 }
 
+/** A fresh page whose /api/* writes are blocked (or answered by demo data). */
+async function openPage(context, job) {
+  const page = await context.newPage();
+  await page.clock.setFixedTime(new Date(job.fixedTime));
+  const blocked = [];
+  const mocked = [];
+  const consoleErrors = [];
+  page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text().slice(0, 300)));
+  page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 300)));
+  await page.route("**/api/**", (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const path = url.pathname;
+    const mock = findMock(job.mocks, req.method(), url);
+    if (mock) {
+      mocked.push(`${req.method()} ${path}`);
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mock.body) });
+    }
+    if (req.method() === "GET" || job.allowNonGet.includes(path)) return route.continue();
+    blocked.push({ method: req.method(), url: path });
+    return route.abort("blockedbyclient");
+  });
+  return { page, blocked, mocked, consoleErrors };
+}
+
+/** Cuts and saves the picture of the screen as it is now; notes toasts and a missed region. */
+async function takePicture(page, shot, job, result) {
+  // Notices on screen at capture time: an error toast makes the image unusable.
+  result.toasts = job.toastSelector
+    ? await page
+        .locator(job.toastSelector)
+        .evaluateAll(
+          (els, attr) => els.map((e) => `${(attr && e.getAttribute(attr)) || "info"}: ${e.innerText.trim()}`),
+          job.toastTypeAttr,
+        )
+    : [];
+  const mask = (job.maskButtons ?? []).map((name) => page.getByRole("button", { name }));
+  const vp = page.viewportSize();
+  if (shot.capture === "dialog") {
+    // Tall enough that a max-height modal shows its whole body (messages at the bottom).
+    await page.setViewportSize({ width: vp.width, height: Math.max(vp.height, 1600) });
+    await page.waitForTimeout(400);
+  }
+  if (shot.capture !== "full") await unclip(page);
+  // A dialog unrolled taller than the window is centred off its top: grow the window to it.
+  const d = dialogs(page).last();
+  const db = (await d.count()) > 0 ? await d.boundingBox().catch(() => null) : null;
+  const now = page.viewportSize();
+  if (db && (db.y < 0 || db.y + db.height > now.height)) {
+    await page.setViewportSize({ width: now.width, height: Math.min(Math.ceil(db.height) + 120, 8000) });
+    await page.waitForTimeout(400);
+  }
+  const clip = await cutBox(page, shot);
+  if (shot.region?.length && !clip?.found) result.regionMissed = true;
+  if (clip) {
+    await page.screenshot({ path: shot.out, clip: clip.box, fullPage: true, mask, maskColor: "#c9ced6", animations: "disabled" });
+    // The whole screen and where the picture was cut from it, so a person can cut again.
+    const full = shot.out.replace(/\.png$/, ".full.png");
+    if (await page.screenshot({ path: full, fullPage: true, mask, maskColor: "#c9ced6", animations: "disabled" }).then(() => true).catch(() => false)) {
+      const k = job.scale || 1;
+      const b = clip.box;
+      writeFileSync(shot.out.replace(/\.png$/, ".box.json"), JSON.stringify({ x: Math.round(b.x * k), y: Math.round(b.y * k), width: Math.round(b.width * k), height: Math.round(b.height * k) }));
+    }
+  } else if (shot.capture === "dialog") {
+    await dialogs(page).last().screenshot({ path: shot.out, animations: "disabled", timeout: 10000 });
+  } else {
+    const fullPage = shot.capture === "full";
+    await page.screenshot({ path: shot.out, fullPage, mask, maskColor: "#c9ced6", animations: "disabled" });
+  }
+  if (shot.capture === "dialog") await page.setViewportSize(vp);
+}
+
+/**
+ * Explore mode: one page, driven one command at a time by a model that looks at each screen
+ * (D-057). Answers every command with what the screen shows now: its accessibility tree and,
+ * when `look` names a file, a screenshot of the viewport.
+ */
+async function explore(context, job, base) {
+  const { page, blocked } = await openPage(context, job);
+  const idle = apiIdle(page, job.settleMs, job.timeoutMs);
+  try {
+    for (;;) {
+      const next = await stdinLines.next();
+      if (next.done) break;
+      const c = JSON.parse(next.value);
+      if (c.cmd === "end") break;
+      const obs = { type: "obs", ok: true };
+      try {
+        if (c.cmd === "open") {
+          await page.goto(new URL(c.path, base).toString(), { waitUntil: "load", timeout: job.timeoutMs });
+          await idle.wait();
+          await page.evaluate(() => document.fonts.ready);
+          if (new URL(page.url()).pathname.startsWith("/login")) throw new Error("로그인 화면으로 이동됨 (세션 없음 또는 만료)");
+        } else if (c.cmd === "step") {
+          await runStep(page, c.step, idle);
+        } else if (c.cmd === "shot") {
+          // The last command of a scene: the picture unrolls the page.
+          await takePicture(page, c.shot, job, obs);
+          obs.out = c.shot.out;
+        }
+      } catch (e) {
+        obs.ok = false;
+        obs.error = c.step ? explain(c.step, e) : String(e).split("\n")[0].slice(0, 300);
+      }
+      if (c.cmd !== "shot") {
+        obs.aria = await ariaOf(page).catch(() => "");
+        if (c.look && (await page.screenshot({ path: c.look, animations: "disabled" }).then(() => true).catch(() => false))) obs.look = c.look;
+      }
+      obs.url = new URL(page.url()).pathname + new URL(page.url()).search;
+      obs.blocked = blocked.splice(0);
+      emit(obs);
+    }
+  } finally {
+    idle.stop();
+    await page.close();
+  }
+}
+
 async function main() {
   const job = await readJob();
   const base = new URL(job.baseUrl);
@@ -301,27 +505,9 @@ async function main() {
       else document.addEventListener("DOMContentLoaded", add);
     }, DISABLE_MOTION);
 
+    if (job.explore) return await explore(context, job, base);
     for (const shot of job.shots) {
-      const page = await context.newPage();
-      await page.clock.setFixedTime(new Date(job.fixedTime));
-      const blocked = [];
-      const mocked = [];
-      const consoleErrors = [];
-      page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text().slice(0, 300)));
-      page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 300)));
-      await page.route("**/api/**", (route) => {
-        const req = route.request();
-        const url = new URL(req.url());
-        const path = url.pathname;
-        const mock = findMock(job.mocks, req.method(), url);
-        if (mock) {
-          mocked.push(`${req.method()} ${path}`);
-          return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mock.body) });
-        }
-        if (req.method() === "GET" || job.allowNonGet.includes(path)) return route.continue();
-        blocked.push({ method: req.method(), url: path });
-        return route.abort("blockedbyclient");
-      });
+      const { page, blocked, mocked, consoleErrors } = await openPage(context, job);
       const idle = apiIdle(page, job.settleMs, job.timeoutMs);
       // GET /api/* bodies seen while probing: tells the planner what data really exists.
       const apiData = [];
@@ -386,33 +572,7 @@ async function main() {
             await tabs.first().click({ timeout: 5000 }).catch(() => {});
             result.apiData = apiData.slice(0, 40);
           }
-          // Notices on screen at capture time: an error toast makes the image unusable.
-          result.toasts = job.toastSelector
-            ? await page
-                .locator(job.toastSelector)
-                .evaluateAll(
-                  (els, attr) => els.map((e) => `${(attr && e.getAttribute(attr)) || "info"}: ${e.innerText.trim()}`),
-                  job.toastTypeAttr,
-                )
-            : [];
-          const mask = (job.maskButtons ?? []).map((name) => page.getByRole("button", { name }));
-          const vp = page.viewportSize();
-          if (shot.capture === "dialog") {
-            // Tall enough that a max-height modal shows its whole body (messages at the bottom).
-            await page.setViewportSize({ width: vp.width, height: Math.max(vp.height, 1600) });
-            await page.waitForTimeout(400);
-          }
-          const clip = await cutBox(page, shot);
-          if (shot.region?.length && !clip?.found) result.regionMissed = true;
-          if (clip) {
-            await page.screenshot({ path: shot.out, clip: clip.box, fullPage: true, mask, maskColor: "#c9ced6", animations: "disabled" });
-          } else if (shot.capture === "dialog") {
-            await dialogs(page).last().screenshot({ path: shot.out, animations: "disabled", timeout: 10000 });
-          } else {
-            const fullPage = shot.capture === "full";
-            await page.screenshot({ path: shot.out, fullPage, mask, maskColor: "#c9ced6", animations: "disabled" });
-          }
-          if (shot.capture === "dialog") await page.setViewportSize(vp);
+          await takePicture(page, shot, job, result);
           result.ok = true;
         }
       } catch (e) {

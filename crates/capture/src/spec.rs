@@ -66,6 +66,10 @@ pub struct Screen {
     /// Attribute on a toast that holds its type (`error`, `success`, ...).
     #[serde(default)]
     pub toast_type_attr: Option<String>,
+    /// POST paths that only read (a preview, a search), checked in the product's code and let
+    /// through on a shared server; every other non-GET stays blocked.
+    #[serde(default)]
+    pub read_posts: Vec<String>,
 }
 
 pub fn from_str(text: &str) -> Result<UiSpec, String> {

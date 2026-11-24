@@ -296,6 +296,17 @@ pub trait Host: Send + Sync + 'static {
         let _ = source;
         Err("이 화면에서는 SSH 서버 살펴보기를 지원하지 않습니다".into())
     }
+    /// Cuts one scene's picture again from the whole screen saved with it (`[x, y, w, h]` in
+    /// the whole screen's pixels).
+    fn recrop_scene(
+        &self,
+        feature: &str,
+        image: &str,
+        cut: [u32; 4],
+    ) -> Result<serde_json::Value, String> {
+        let _ = (feature, image, cut);
+        Err("이 화면에서는 범위 다시 자르기를 지원하지 않습니다".into())
+    }
     /// A person's instruction for shooting one scene (`None` clears it).
     fn set_scene_instruction(
         &self,

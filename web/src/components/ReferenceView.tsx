@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { pickPicture, type Picked } from "../pictures";
 import {
   fetchReference,
@@ -10,6 +10,7 @@ import {
   setSceneUpload,
   setSceneChoice,
   setSceneInstruction,
+  recropScene,
   shotUrl,
   type RefDoc,
   type RefImage,
@@ -58,6 +59,9 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
   const [doc, setDoc] = useState<RefDoc | null | undefined>(undefined);
   const [big, setBig] = useState<{ img: RefImage; page: boolean } | null>(null);
   const [shots, setShots] = useState<SceneShots | null>(null);
+  /** Scene whose picture is being cut again, and a counter that refreshes cut pictures. */
+  const [cropping, setCropping] = useState<SceneShot | null>(null);
+  const [bust, setBust] = useState(0);
   const [demo, setDemo] = useState(false);
   const [err, setErr] = useState("");
   /** Choices and uploads save at once; this tells the user it happened. */
@@ -180,6 +184,34 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
           <span className="muted small"> · 못 찍은 장면은 그림을 직접 올리면 새 매뉴얼에 들어갑니다</span>
         </div>
       )}
+      {shots && shots.scenes.some((s) => s.changes?.length) && (
+        <details className="ref-changes">
+          <summary>
+            <b>기존 매뉴얼과 달라진 화면</b> {shots.scenes.filter((s) => s.changes?.length).length}장 ·{" "}
+            {shots.scenes.reduce((k, s) => k + (s.changes?.length ?? 0), 0)}곳
+            <span className="muted small"> — ④에서 코드로 다시 쓰면 새 기능·옵션마다 그림 자리가 생기고 자동으로 찍힙니다</span>
+          </summary>
+          <ul>
+            {shots.scenes
+              .filter((s) => s.changes?.length)
+              .map((s) => (
+                <li key={s.image}>
+                  <button
+                    className="link"
+                    onClick={() => document.querySelector(`[data-image="${CSS.escape(s.image)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                  >
+                    {s.heading || s.image} (p.{s.page})
+                  </button>
+                  <ul>
+                    {s.changes!.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+          </ul>
+        </details>
+      )}
       {err && <p className="flash err">{err}</p>}
       <div className="autosave">
         {saved ? <span className="ok">✓ {saved}</span> : <span className="muted">고르거나 올리면 바로 저장됩니다 (저장 버튼 없음)</span>}
@@ -189,6 +221,17 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
           <a key={i} href={`#ref-${i}`}>{g.heading}</a>
         ))}
       </nav>
+      {cropping?.file && (
+        <CropDialog
+          file={cropping.file}
+          onClose={() => setCropping(null)}
+          onSave={async (cut) => {
+            setShots(await recropScene(featureKey, cropping.image, cut));
+            setBust((b) => b + 1);
+            setCropping(null);
+          }}
+        />
+      )}
       {groups.map((g, gi) => (
         <section key={gi} id={`ref-${gi}`} className="ref-group">
           <h3>{g.heading}</h3>
@@ -214,9 +257,14 @@ export default function ReferenceView({ featureKey, version, onCommand, focus, o
                     {shotOf(img)?.uploaded ? (
                       <img src={docAssetUrl(featureKey, shotOf(img)!.uploaded!)} alt="올린 그림" loading="lazy" />
                     ) : shotOf(img)?.file ? (
-                      <a href={shotUrl(shotOf(img)!.file!, null)} target="_blank" rel="noreferrer">
-                        <img src={shotUrl(shotOf(img)!.file!, String(shots?.taken_at ?? 0))} alt="새 캡처" loading="lazy" />
-                      </a>
+                      <>
+                        <a href={shotUrl(shotOf(img)!.file!, null)} target="_blank" rel="noreferrer">
+                          <img src={shotUrl(shotOf(img)!.file!, `${shots?.taken_at ?? 0}-${bust}`)} alt="새 캡처" loading="lazy" />
+                        </a>
+                        <button className="link small" onClick={() => setCropping(shotOf(img)!)} title="찍을 때 저장한 전체 화면에서 범위를 다시 고릅니다 (모델 호출 없음)">
+                          범위 고치기
+                        </button>
+                      </>
                     ) : (
                       <div className="none">{shotOf(img) ? "못 찍음" : "아직 안 찍음"}</div>
                     )}
@@ -457,6 +505,78 @@ function ChoicePicker({ shot, picked, onChoose }: { shot?: SceneShot; picked: Pi
         ))}
       </div>
       <span className={`fig-badge ${picked.kind}`}>→ {picked.label}</span>
+    </div>
+  );
+}
+
+/**
+ * Cuts a scene's picture again: the whole screen saved when it was shot, the current cut
+ * outlined; drag on it to draw a new one.
+ */
+function CropDialog({ file, onClose, onSave }: { file: string; onClose: () => void; onSave: (cut: [number, number, number, number]) => Promise<void> }) {
+  const full = file.replace(/\.png$/, ".full.png");
+  const img = useRef<HTMLImageElement>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [cut, setCut] = useState<[number, number, number, number] | null>(null);
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    fetch(shotUrl(file.replace(/\.png$/, ".box.json"), String(Date.now())))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => b && setCut([b.x, b.y, b.width, b.height]))
+      .catch(() => {});
+  }, [file]);
+  // Screen pixels of the shown image ↔ pixels of the saved whole screen.
+  const scale = () => (natural && img.current ? natural.w / img.current.clientWidth : 1);
+  const at = (e: React.PointerEvent) => {
+    const r = img.current!.getBoundingClientRect();
+    const k = scale();
+    return { x: Math.max(0, (e.clientX - r.left) * k), y: Math.max(0, (e.clientY - r.top) * k) };
+  };
+  const k = scale();
+  return (
+    <div className="picker-backdrop" onMouseDown={onClose}>
+      <div className="picker crop-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="crop-head">
+          <b>범위 고치기</b>
+          <span className="muted small">찍을 때의 전체 화면입니다. 드래그해서 새 범위를 그리세요.</span>
+          <span className="spacer" />
+          <button className="btn" onClick={onClose}>닫기</button>
+          <button
+            className="btn primary"
+            disabled={!cut || cut[2] < 10 || cut[3] < 10}
+            onClick={() => cut && onSave(cut.map(Math.round) as [number, number, number, number]).catch((x) => setErr(String((x as Error).message ?? x)))}
+          >
+            이 범위로 자르기
+          </button>
+        </div>
+        {err && <p className="flash err small">{err}</p>}
+        <div className="crop-area">
+          <img
+            ref={img}
+            src={shotUrl(full, String(Date.now()))}
+            alt="전체 화면"
+            draggable={false}
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            onError={() => setErr("전체 화면이 저장되지 않은 그림입니다. 장면을 다시 찍으면 생깁니다.")}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              const p = at(e);
+              setDrag(p);
+              setCut([p.x, p.y, 0, 0]);
+            }}
+            onPointerMove={(e) => {
+              if (!drag) return;
+              const p = at(e);
+              setCut([Math.min(drag.x, p.x), Math.min(drag.y, p.y), Math.abs(p.x - drag.x), Math.abs(p.y - drag.y)]);
+            }}
+            onPointerUp={() => setDrag(null)}
+          />
+          {cut && natural && (
+            <div className="crop-box" style={{ left: cut[0] / k, top: cut[1] / k, width: cut[2] / k, height: cut[3] / k }} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

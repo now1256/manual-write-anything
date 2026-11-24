@@ -36,10 +36,18 @@ every column, card, button, field, option, tab and message a user works with tha
 there and missing from the old text is added (basis screen); what the old text says differently \
 is corrected (basis changed); each listed screen change is reflected in the text. Values in the \
 pictures (names, numbers, dates) are sample data: never write them.
+New pictures: the old manual shows each state a user works with in a picture, and so must the \
+new one. Each listed screen change that adds a choice, option, panel, step or column whose screen \
+looks different when used (e.g. a new toggle value that changes the form below it) gets a new \
+picture right after the blocks about it, showing that state: <figure data-want=\"화면 — 상태 — 자를 \
+부분\"><figcaption>CAPTION</figcaption></figure>, e.g. data-want=\"주문 등록 창 — 결제 방식 \
+'계좌 이체' 선택 — 창 전체\" (basis new). Do the same for a screen or dialog you add that no figure shows. \
+Up to four per section; none for a change a figure already shows as it is now (a renamed label, an \
+added column in a table that is pictured).
 ",
     user_rule!(),
     " Return the section as blocks in order, one top-level HTML block each. Keep the data-bid of every \
-block you keep or change; new blocks have none. Copy <figure> blocks unchanged. Use only h2 h3 h4 \
+block you keep or change; new blocks have none. Copy the existing <figure> blocks unchanged. Use only h2 h3 h4 \
 p ul ol li strong em u s code table tr th td br hr, div data-panel, span data-status, figure. \
 facts: the ids each block rests on. why: one Korean sentence (합니다체) on why the block says \
 this, e.g. 'F012에 내보내기 형식이 CSV와 XLSX로 나와 있어 XLSX를 추가했습니다'."
@@ -480,6 +488,15 @@ pub async fn from_code(
             .ok_or_else(|| ManualError::Invalid(format!("기존 매뉴얼 버전 {b}이 없습니다")))?,
         _ => doc.html.clone(),
     };
+    // Pictures keep the old manual's sizes and rows (documents imported before they did).
+    let refdoc = doc.reference.as_deref().and_then(|id| {
+        let _ = crate::reference::relayout(ws, id);
+        crate::reference::load(ws, id)
+    });
+    let source = match &refdoc {
+        Some(r) => document::lay_out(&source, r),
+        None => source,
+    };
     let parts = sections(&source);
     let all_facts = fact_lines(facts);
     let scenes = crate::reference::load_scene_shots(ws, feature);
@@ -536,6 +553,23 @@ pub async fn from_code(
     let mut written: Vec<Written> = Vec::new();
     for (section, r) in parts.iter().zip(results) {
         let mut w = r?;
+        // The model may drop a picture's layout attributes when it copies the block; a new
+        // picture takes the old manual's usual width.
+        if let Some(r) = &refdoc {
+            let mut widths: Vec<u32> = r.images.iter().filter_map(|i| i.pct).collect();
+            widths.sort_unstable();
+            let usual = widths.get(widths.len() / 2).copied().filter(|w| *w < 95);
+            for x in &mut w {
+                x.html = document::laid_out(&x.html, r);
+                if let Some(u) = usual
+                    && x.html.starts_with("<figure")
+                    && document::attr_of(&x.html, "data-want").is_some()
+                    && document::attr_of(&x.html, "data-width").is_none()
+                {
+                    x.html = document::set_attr(&x.html, "data-width", Some(&u.to_string()));
+                }
+            }
+        }
         // Pictures are never lost: any the model left out go back at the end of their section.
         let have: BTreeSet<String> = w.iter().filter_map(|x| bid_of(&x.html)).collect();
         for b in section.iter().filter(|b| b.starts_with("<figure")) {

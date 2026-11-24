@@ -29,6 +29,12 @@ pub struct RefImage {
     /// What the picture shows, from the worker model looking at it (`describe`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scene: Option<Scene>,
+    /// Width in % of the page body, as the old manual showed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pct: Option<u32>,
+    /// Pictures side by side in the old manual share a row number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -448,6 +454,7 @@ pub fn import(ws: &Path, pdf: &Path, features: &[FeatureRef]) -> Result<RefDoc, 
         })
         .collect();
 
+    let layout = layout_of(&items);
     let mut images = Vec::new();
     for i in &items {
         let Item::Image {
@@ -456,6 +463,7 @@ pub fn import(ws: &Path, pdf: &Path, features: &[FeatureRef]) -> Result<RefDoc, 
             width,
             height,
             src,
+            ..
         } = i
         else {
             continue;
@@ -505,6 +513,8 @@ pub fn import(ws: &Path, pdf: &Path, features: &[FeatureRef]) -> Result<RefDoc, 
             context,
             caption,
             scene: None,
+            pct: layout.get(src.as_str()).map(|l| l.0),
+            row: layout.get(src.as_str()).and_then(|l| l.1),
         });
     }
 
@@ -522,6 +532,116 @@ pub fn import(ws: &Path, pdf: &Path, features: &[FeatureRef]) -> Result<RefDoc, 
     };
     save(ws, &doc)?;
     Ok(doc)
+}
+
+/// Each picture's width in % of the page body (where the text runs) and, for pictures side by
+/// side, a shared row number; keyed by the picture's file as pdftohtml named it.
+fn layout_of(items: &[Item]) -> HashMap<String, (u32, Option<u32>)> {
+    let mut lefts: Vec<i32> = Vec::new();
+    let mut rights: Vec<i32> = Vec::new();
+    for i in items {
+        if let Item::Text { left, width, .. } = i {
+            lefts.push(*left);
+            rights.push(left + width);
+        }
+    }
+    lefts.sort_unstable();
+    rights.sort_unstable();
+    // Robust edges: a stray page number or a wide table should not move them.
+    let at = |v: &[i32], q: f64| v.get(((v.len() as f64 - 1.0) * q) as usize).copied();
+    let (Some(l), Some(r)) = (at(&lefts, 0.05), at(&rights, 0.95)) else {
+        return HashMap::new();
+    };
+    let body = (r - l).max(1) as f64;
+    let pics: Vec<(u32, i32, i32, &str)> = items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Image {
+                page,
+                top,
+                width,
+                height,
+                src,
+                ..
+            } if *width >= 150 && *height >= 40 => {
+                Some((*page, *top, *top + *height as i32, src.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    let mut out = HashMap::new();
+    let mut next_row = 0u32;
+    let mut row_of: HashMap<usize, u32> = HashMap::new();
+    for (a, pa) in pics.iter().enumerate() {
+        for (b, pb) in pics.iter().enumerate().skip(a + 1) {
+            let overlap = pa.2.min(pb.2) - pa.1.max(pb.1);
+            let shorter = (pa.2 - pa.1).min(pb.2 - pb.1);
+            if pa.0 == pb.0 && overlap * 2 >= shorter {
+                let r = *row_of.entry(a).or_insert_with(|| {
+                    next_row += 1;
+                    next_row
+                });
+                row_of.insert(b, r);
+            }
+        }
+    }
+    for (k, i) in items
+        .iter()
+        .filter_map(|i| match i {
+            Item::Image {
+                width, src, height, ..
+            } if *width >= 150 && *height >= 40 => Some((*width, src)),
+            _ => None,
+        })
+        .enumerate()
+    {
+        let pct = ((f64::from(i.0) / body) * 100.0).round().clamp(10.0, 100.0) as u32;
+        out.insert(i.1.clone(), (pct, row_of.get(&k).copied()));
+    }
+    out
+}
+
+/// Reads the old manual's picture layout again from its PDF for a document imported before
+/// pictures kept it; scene descriptions stay. Returns whether anything changed.
+pub fn relayout(ws: &Path, id: &str) -> Result<bool, ManualError> {
+    let Some(mut doc) = load(ws, id) else {
+        return Ok(false);
+    };
+    if doc.images.iter().all(|i| i.pct.is_some()) || !doc.source.ends_with(".pdf") {
+        return Ok(false);
+    }
+    let tmp = ws.join(".mwa").join(format!("relayout-{id}"));
+    std::fs::create_dir_all(&tmp).map_err(io(&tmp))?;
+    let read = run(
+        Command::new("pdftohtml")
+            .args(["-xml", "-q", "-nodrm", "-fmt", "png"])
+            .arg(&doc.source)
+            .arg(tmp.join("p")),
+        "pdftohtml",
+    )
+    .and_then(|_| {
+        let xml_path = tmp.join("p.xml");
+        std::fs::read_to_string(&xml_path).map_err(io(&xml_path))
+    });
+    let _ = std::fs::remove_dir_all(&tmp);
+    let layout = layout_of(&parse_xml(&read?));
+    let mut changed = false;
+    for img in &mut doc.images {
+        let name = img.file.trim_start_matches("img/");
+        if let Some((_, l)) = layout.iter().find(|(src, _)| {
+            Path::new(src.as_str())
+                .file_name()
+                .is_some_and(|n| n == name)
+        }) {
+            img.pct = Some(l.0);
+            img.row = l.1;
+            changed = true;
+        }
+    }
+    if changed {
+        save(ws, &doc)?;
+    }
+    Ok(changed)
 }
 
 pub fn save(ws: &Path, doc: &RefDoc) -> Result<(), ManualError> {
@@ -752,6 +872,7 @@ pub fn attempt_of(r: &mwa_capture::detail::DetailRecord) -> Attempt {
             "fill" => "입력",
             "select" => "선택",
             "hover" => "올리기",
+            "press" => "키",
             "wait" => "기다림",
             other => other,
         }
@@ -1227,6 +1348,8 @@ mod tests {
             context: String::new(),
             caption: String::new(),
             scene: None,
+            pct: None,
+            row: None,
         };
         std::fs::create_dir_all(ws.join(DIR).join("d")).unwrap();
         save(
@@ -1331,5 +1454,23 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Item::Image { width: 400, .. }))
         );
+    }
+
+    #[test]
+    fn pictures_keep_width_and_rows() {
+        // Body text from 50 to 550; one full-width picture, then two side by side.
+        let xml = r##"<pdf2xml><page number="1" position="absolute" top="0" left="0" height="842" width="596">
+<fontspec id="1" size="11" family="A" color="#000"/>
+<text top="40" left="50" width="500" height="13" font="1">본문 한 줄</text>
+<image top="60" left="50" width="500" height="200" src="x/p-1_1.png"/>
+<image top="300" left="50" width="240" height="160" src="x/p-1_2.png"/>
+<image top="310" left="310" width="240" height="140" src="x/p-1_3.png"/>
+<text top="480" left="50" width="500" height="13" font="1">끝</text>
+</page></pdf2xml>"##;
+        let l = layout_of(&parse_xml(xml));
+        assert_eq!(l["x/p-1_1.png"], (100, None));
+        assert_eq!(l["x/p-1_2.png"].0, 48);
+        assert!(l["x/p-1_2.png"].1.is_some());
+        assert_eq!(l["x/p-1_2.png"].1, l["x/p-1_3.png"].1);
     }
 }

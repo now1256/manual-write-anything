@@ -3,6 +3,7 @@
 pub mod creds;
 pub mod detail;
 pub mod diff;
+pub mod explore;
 pub mod login;
 pub mod mem;
 pub mod menus;

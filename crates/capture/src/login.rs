@@ -148,6 +148,24 @@ pub async fn whoami(auth: &AuthSpec, base_url: &str, cookie: &str) -> Result<Val
 }
 
 /// `POST <logout_path>` so checks do not leave sessions behind.
+/// Extends the session the way the product's screen does after a person's input (the
+/// adapter's `[auth] keepalive_paths`). Capture runs for longer than an idle session lives and
+/// a headless browser types nothing, so the screen itself never extends it.
+pub async fn touch(base_url: &str, path: &str, cookie: &str) -> Result<(), String> {
+    let resp = client()
+        .post(url(base_url, path))
+        .header("cookie", cookie)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
 pub async fn logout(auth: &AuthSpec, base_url: &str, cookie: &str) -> Result<(), String> {
     let resp = client()
         .post(url(base_url, &auth.logout_path))

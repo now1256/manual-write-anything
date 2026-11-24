@@ -33,6 +33,9 @@ pub struct Job {
     /// Demo responses served instead of the server (D-028). Never forwarded.
     pub mocks: Vec<Mock>,
     pub shots: Vec<JobShot>,
+    /// One page driven by commands after the job (`explore::Session`); `shots` unused.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub explore: bool,
 }
 
 /// One demo response. `path` is an `/api/...` template with `{}` segments; empty `params`
@@ -93,7 +96,7 @@ pub struct JobShot {
 /// One planned interaction, located by accessible role and name (F6).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Step {
-    /// `click`, `fill`, `select`, `hover` or `wait`.
+    /// `click`, `fill`, `select`, `hover`, `press` (a key in `value`) or `wait`.
     pub action: String,
     pub role: String,
     pub name: String,
@@ -359,6 +362,7 @@ mod tests {
             timeout_ms: 20000,
             mocks: vec![],
             shots: vec![],
+            explore: false,
         }
     }
 

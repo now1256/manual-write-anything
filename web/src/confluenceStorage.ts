@@ -144,16 +144,33 @@ function blocks(el: Element, ctx: Ctx): string {
           ? NOTE_PANEL(body)
           : `<ac:structured-macro ac:name="${PANEL[b.dataset.panel] ?? "info"}"><ac:rich-text-body>${body}</ac:rich-text-body></ac:structured-macro>`;
     } else if (tag === "FIGURE") {
-      const src = ctx.srcOf(b);
-      if (src) {
+      // Pictures side by side (one row) go inline into one paragraph; the first writes them all.
+      const row = b.dataset.row;
+      const prev = b.previousElementSibling as HTMLElement | null;
+      if (row && prev?.tagName === "FIGURE" && prev.dataset.row === row) continue;
+      const group = [b];
+      for (let n = b.nextElementSibling as HTMLElement | null; row && n?.tagName === "FIGURE" && n.dataset.row === row; n = n.nextElementSibling as HTMLElement | null) group.push(n);
+      const imgs: string[] = [];
+      for (const f of group) {
+        const src = ctx.srcOf(f);
+        if (!src) continue;
         const ext = /\.jpe?g(\?|$)/i.test(src) ? "jpg" : "png";
-        const name = `${b.dataset.bid ?? `pic-${ctx.images.length + 1}`}.${ext}`;
+        const name = `${f.dataset.bid ?? `pic-${ctx.images.length + 1}`}.${ext}`;
         ctx.images.push({ name, url: src });
-        const pct = Number(b.dataset.width);
+        const pct = Number(f.dataset.width);
         const width = pct ? Math.round((PAGE_PX * pct) / 100) : DEFAULT_PX;
-        out += `<ac:image ac:align="center" ac:layout="center" ac:width="${width}"><ri:attachment ri:filename="${esc(name)}" /></ac:image>`;
+        imgs.push(
+          group.length > 1
+            ? `<ac:image ac:width="${width}"><ri:attachment ri:filename="${esc(name)}" /></ac:image>`
+            : `<ac:image ac:align="center" ac:layout="center" ac:width="${width}"><ri:attachment ri:filename="${esc(name)}" /></ac:image>`,
+        );
       }
-      const caption = b.querySelector("figcaption")?.textContent?.trim();
+      if (imgs.length > 1) out += `<p style="text-align: center;">${imgs.join(" ")}</p>`;
+      else out += imgs.join("");
+      const caption = group
+        .map((f) => f.querySelector("figcaption")?.textContent?.trim())
+        .filter(Boolean)
+        .join(" / ");
       if (caption) out += `<p style="text-align: center;"><em>${esc(caption)}</em></p>`;
     } else if (tag === "BLOCKQUOTE") out += `<blockquote>${blocks(b, ctx)}</blockquote>`;
     else if (tag === "PRE") {

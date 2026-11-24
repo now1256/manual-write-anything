@@ -99,7 +99,7 @@ fn step_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["click", "fill", "select", "hover", "wait"]},
+            "action": {"type": "string", "enum": ["click", "fill", "select", "hover", "press", "wait"]},
             "role": {"type": "string"},
             "name": {"type": "string"},
             "exact": {"type": "boolean"},
@@ -281,8 +281,14 @@ fullest records. If the state cannot be reached with \
 this tool, set feasible false instead of guessing: needs_write (it needs a change the shared server must \
 really perform; requests listed as answered by demo data are fine to send), realtime (live streams or \
 progress), account (another user, role or permission), not_found (the screen or control no longer exists \
-in the snapshot or the code's labels), no_data (the demo data cannot express it), other. Give the reason \
-in Korean. Data values, names and counts may differ from the old picture; that never makes a scene \
+in the snapshot or the code's labels), no_data (the data cannot express it), other. Give the reason \
+in Korean. You see only each page's first screen and the records those screens loaded: dropdown \
+options, lists inside dialogs and wizard steps, and records of other pages are not shown to you. Never \
+call a scene no_data or needs_write because you have not seen such a record; plan the steps that look \
+for it (open the dropdown, switch the tab, pick a record in the needed state) and set feasible false \
+only when the shown data rules it out. A record already in the needed state (rejected, saved as a \
+draft, waiting for review) is found, not made: that is no write. Always give your best plan's steps, \
+also with feasible false; they are tried (writes stay blocked). Data values, names and counts may differ from the old picture; that never makes a scene \
 infeasible. Use no_data only when the state itself (an error from the server, a record in a status the \
 data lacks) cannot appear. Names of records in the old picture need not exist: use any record of \
 the same kind and state that the data shows. A disabled control is usually caused by the record's \
@@ -515,4 +521,149 @@ mod tests {
             vec![("a".to_string(), "삭제 대화상자".to_string())]
         );
     }
+}
+
+/// What the explorer does next (D-057).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Move {
+    /// One short Korean sentence: what the screen shows and why this move.
+    pub thought: String,
+    /// `step`, `shoot` or `give_up`.
+    pub kind: String,
+    pub step: Step,
+    /// For `shoot`: `page` or `dialog`, and 2-5 texts inside the part to cut.
+    pub capture: String,
+    pub region: Vec<String>,
+    /// For `give_up`: a reason kind and the reason in Korean.
+    pub reason_kind: String,
+    pub reason: String,
+}
+
+const EXPLORE_SYSTEM: &str = "You operate a web product one action at a time, like a person, to \
+reach the screen in the old manual's picture (the first attached image) so that it can be \
+photographed again for a Korean user manual. Without an old picture, only the current screen is \
+attached and the scene is given in words as '화면 — 상태 — 자를 부분' (a new picture the manual \
+needs). The last image is the current screen and the accessibility tree below is the same screen (YAML: `- role \"name\"`; open dialogs come first). \
+Each turn pick exactly one move:
+- step: one action executed with Playwright getByRole(role, {name}) that must match exactly one \
+element; copy roles and names from the tree. Actions: click, fill (value), select (native <select> \
+only), hover, press (value = a key such as Escape or Enter), wait. role text clicks visible text \
+that is not a control (name = a part of the text, e.g. a paragraph you click to edit it). Custom \
+dropdowns (role combobox \
+or a button showing the current choice) open with a click, then click the role option. Use within \
+\"dialog\" for elements inside an open dialog, row (one cell's text) for a table row's control and \
+near (a title in the same card) when several cards share a button name. After a click that opens \
+something, the next screen shows it: look before going on.
+- shoot: the screen now shows the same screen and state as the old picture (data, names and counts \
+may differ; the content is a sample). capture is dialog when the picture is a dialog or a part of \
+one, else page; region is 2-5 short texts that appear in the old picture itself (titles, labels, \
+button names, not data values), spread across it from its top to its bottom, so the cut covers \
+the same part and no more. Before shooting, close what the old picture does not show (an open \
+dropdown or menu: press Escape) with a step first.
+- give_up: the state cannot be reached here; reason_kind is needs_write (only a real change on the \
+server would make it), account (another user or permission), not_found (the screen or control no \
+longer exists after you looked for it), no_data (you looked and no record in the needed state \
+exists), other; reason in Korean, saying what you tried.
+Rules: never press buttons that commit inside a dialog (저장, 생성, 등록, 삭제, 확인, 적용, 실행, \
+제출, 승인, 반려); they are refused. Navigation buttons (다음, 이전, 취소, 닫기, 미리보기) are fine. \
+Write requests to the server are blocked: a screen that needs one to go on cannot be reached. Fill \
+required fields with realistic Korean values (not the old picture's text) to move through a \
+wizard. Names of records in the old picture need not exist: use any record of the same kind and \
+state, the most filled-in one. Look for what you have not seen: open dropdowns, switch tabs, open \
+a record. When a move failed, do something else rather than the same move again. Use few moves.";
+
+/// Code facts that share the most words with `text` (a scene): rules such as "card payment is
+/// only offered for domestic orders" save the explorer many moves.
+pub fn related_facts(facts: &[crate::model::Fact], text: &str, n: usize) -> String {
+    // Pairs of letters, so Korean particles (선택지는, 선택을) still match the word (선택);
+    // a pair in many facts (프로젝트, 생성) says little, so rare pairs weigh more.
+    let pairs = |t: &str| -> std::collections::BTreeSet<(char, char)> {
+        t.split(|c: char| !c.is_alphanumeric())
+            .flat_map(|w| {
+                let cs: Vec<char> = w.to_lowercase().chars().collect();
+                cs.windows(2).map(|p| (p[0], p[1])).collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let of: Vec<_> = facts.iter().map(|f| pairs(&f.statement)).collect();
+    let mut df: std::collections::HashMap<(char, char), usize> = std::collections::HashMap::new();
+    for p in of.iter().flatten() {
+        *df.entry(*p).or_default() += 1;
+    }
+    let total = facts.len().max(1) as f64;
+    let want = pairs(text);
+    let mut scored: Vec<(f64, &str)> = facts
+        .iter()
+        .zip(&of)
+        .map(|(f, p)| {
+            let w: f64 = p
+                .intersection(&want)
+                .map(|x| (total / df[x] as f64).ln())
+                .sum();
+            (w, f.statement.as_str())
+        })
+        .filter(|(w, _)| *w > 0.0)
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored
+        .into_iter()
+        .take(n)
+        .map(|(_, s)| format!("- {s}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The next move toward the old picture's screen, given the moves so far and the screen now.
+#[allow(clippy::too_many_arguments)]
+pub async fn next_move(
+    d: &Dispatcher,
+    scene: &SceneTodo,
+    routes: &[String],
+    hints: &str,
+    rules: &str,
+    history: &[String],
+    url: &str,
+    aria: &str,
+    look: Option<&std::path::Path>,
+) -> Result<Move, ManualError> {
+    let mut images: Vec<std::path::PathBuf> = scene.image.iter().cloned().collect();
+    images.extend(look.map(std::path::Path::to_path_buf));
+    let aria: String = aria.chars().take(12000).collect();
+    let prompt = format!(
+        "## 찍을 장면\n{}\n가는 방법 참고: {}\n\n## 기능의 화면 경로\n{}\n\n## 관련 코드 사실 (제품 규칙: 어떤 선택에서 무엇이 나오는지)\n{}\n\n## 이미 찍은 장면까지 간 동작 (같은 화면을 지나가면 그대로 따라 해도 됩니다)\n{}\n\n## 지금까지 한 동작\n{}\n\n## 지금 화면 ({url})\n{aria}",
+        scene.what,
+        scene.how,
+        routes.join(", "),
+        if rules.is_empty() { "(없음)" } else { rules },
+        if hints.is_empty() { "(없음)" } else { hints },
+        if history.is_empty() {
+            "(아직 없음)".to_string()
+        } else {
+            history.join("\n")
+        },
+    );
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "thought": {"type": "string"},
+            "kind": {"type": "string", "enum": ["step", "shoot", "give_up"]},
+            "step": step_schema(),
+            "capture": {"type": "string", "enum": ["page", "dialog"]},
+            "region": {"type": "array", "items": {"type": "string"}},
+            "reason_kind": {"type": "string", "enum": ["", "needs_write", "account", "not_found", "no_data", "other"]},
+            "reason": {"type": "string"}
+        },
+        "required": ["thought", "kind", "step", "capture", "region", "reason_kind", "reason"]
+    });
+    let out = d
+        .call(
+            Role::Writer,
+            EXPLORE_SYSTEM,
+            &prompt,
+            &images,
+            Some(&schema),
+        )
+        .await?;
+    serde_json::from_value(out.response.json.unwrap_or_default())
+        .map_err(|e| ManualError::Shape(format!("다음 동작: {e}")))
 }

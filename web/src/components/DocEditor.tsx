@@ -133,6 +133,8 @@ const Figure = Node.create({
       shot: dataAttr("shot"),
       want: dataAttr("want"),
       fail: dataAttr("fail"),
+      /** Pictures side by side share a row (as the old manual laid them out). */
+      row: dataAttr("row"),
       /** Width in % of the page; null = natural size. */
       width: {
         default: null,
@@ -156,13 +158,18 @@ const Figure = Node.create({
     return ["figure", mergeAttributes(HTMLAttributes), ["figcaption", {}, node.attrs.caption]];
   },
   addNodeView() {
-    return ReactNodeViewRenderer(FigureView);
+    return ReactNodeViewRenderer(FigureView, {
+      // A picture in a row: the element around the view sits beside its neighbours.
+      attrs: ({ node }): Record<string, string> =>
+        node.attrs.row ? { "data-in-row": "", style: `width: calc(${node.attrs.width ?? 48}% - 1%)` } : { style: "" },
+    });
   },
 });
 
 function FigureView({ node, updateAttributes, deleteNode, selected }: ReactNodeViewProps) {
   const ctx = useContext(DocCtx)!;
-  const { ref, asset, shot, want, fail, caption, width, bid } = node.attrs as {
+  const { ref, asset, shot, want, fail, caption, width, bid, row } = node.attrs as {
+    row: string | null;
     ref: string | null;
     asset: string | null;
     shot: string | null;
@@ -178,7 +185,8 @@ function FigureView({ node, updateAttributes, deleteNode, selected }: ReactNodeV
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
     const img = box.current?.querySelector("img");
-    const page = box.current?.parentElement;
+    // Against the page, also for a picture in a row (its own box is only part of the page).
+    const page = box.current?.closest(".ProseMirror") ?? box.current?.parentElement;
     if (!img || !page) return;
     const full = page.getBoundingClientRect().width;
     const start = img.getBoundingClientRect().width;
@@ -203,7 +211,10 @@ function FigureView({ node, updateAttributes, deleteNode, selected }: ReactNodeV
   const [showOld, setShowOld] = useState(false);
   const [err, setErr] = useState("");
   return (
-    <NodeViewWrapper className={`doc-figure ${selected ? "sel" : ""}`} data-ref={ref ?? undefined}>
+    <NodeViewWrapper
+      className={`doc-figure ${selected ? "sel" : ""} ${row ? "in-row" : ""}`}
+      data-ref={ref ?? undefined}
+    >
       <div className="fig-tools" contentEditable={false}>
         <span className={`fig-badge ${pic.kind}`}>{pic.label}</span>
         <span className="spacer" />
@@ -266,7 +277,7 @@ function FigureView({ node, updateAttributes, deleteNode, selected }: ReactNodeV
       {err && <p className="flash err small">{err}</p>}
       <div className={`fig-pair ${showOld ? "two" : ""}`} contentEditable={false}>
         {pic.src ? (
-          <div className="fig-img" ref={box} style={shown ? { width: `${shown}%` } : undefined}>
+          <div className="fig-img" ref={box} style={shown && !row ? { width: `${shown}%` } : undefined}>
             <img src={pic.src} alt={caption} />
             <span className="fig-handle" onPointerDown={startDrag} title="끌어서 크기 조절" />
             {dragW != null && <span className="fig-size-tip">{dragW}%</span>}

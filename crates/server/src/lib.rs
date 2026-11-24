@@ -129,6 +129,10 @@ pub fn router_with(hub: Arc<Hub>, web_dir: Option<PathBuf>) -> Router {
             "/api/references/shots/{feature}/instruction",
             axum::routing::post(scene_instruction),
         )
+        .route(
+            "/api/references/shots/{feature}/crop",
+            axum::routing::post(scene_crop),
+        )
         .route("/api/references/link", axum::routing::post(link_reference))
         .route(
             "/api/references/upload",
@@ -698,6 +702,24 @@ async fn scene_instruction(
         .host()
         .set_scene_instruction(&feature, &b.image, b.instruction)
     {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => bad_request(&e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SceneCrop {
+    image: String,
+    /// `[x, y, width, height]` in the whole screen's pixels.
+    cut: [u32; 4],
+}
+
+async fn scene_crop(
+    State(hub): State<Arc<Hub>>,
+    axum::extract::Path(feature): axum::extract::Path<String>,
+    Json(b): Json<SceneCrop>,
+) -> Response {
+    match hub.host().recrop_scene(&feature, &b.image, b.cut) {
         Ok(v) => Json(v).into_response(),
         Err(e) => bad_request(&e),
     }

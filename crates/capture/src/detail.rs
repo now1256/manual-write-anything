@@ -255,6 +255,13 @@ pub async fn shoot(
             }
             let dest = final_dir.join(format!("{}.png", p.todo));
             std::fs::copy(path_of(1, &p.todo), &dest)?;
+            // The whole screen and the cut, for cutting again by hand (when the run kept them).
+            for ext in ["full.png", "box.json"] {
+                let from = path_of(1, &p.todo).with_extension(ext);
+                if from.is_file() {
+                    let _ = std::fs::copy(&from, final_dir.join(format!("{}.{ext}", p.todo)));
+                }
+            }
             rec.file = Some(format!("shots/{dir}/{}.png", p.todo));
         }
         rec.needs_retake = if !rec.blocked.is_empty() {

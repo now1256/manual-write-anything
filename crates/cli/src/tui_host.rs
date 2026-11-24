@@ -426,6 +426,35 @@ impl Host for CliHost {
         Ok(serde_json::to_value(shots).unwrap_or_default())
     }
 
+    fn recrop_scene(
+        &self,
+        feature: &str,
+        image: &str,
+        cut: [u32; 4],
+    ) -> Result<serde_json::Value, String> {
+        let shots = mwa_manual::reference::load_scene_shots(&self.ws, feature)
+            .ok_or("장면 촬영 결과가 없습니다")?;
+        let file = shots
+            .scenes
+            .iter()
+            .find(|s| s.image == image)
+            .and_then(|s| s.file.clone())
+            .ok_or("이 장면에는 찍힌 그림이 없습니다")?;
+        let out = self.ws.join(&file);
+        let full = out.with_extension("full.png");
+        if !full.is_file() {
+            return Err(
+                "이 그림은 전체 화면이 저장되지 않았습니다. 장면을 다시 찍으면 생깁니다".into(),
+            );
+        }
+        let [x, y, w, h] = cut;
+        mwa_capture::diff::crop(&full, &out, x, y, w, h).map_err(|e| e.to_string())?;
+        let cut = serde_json::json!({"x": x, "y": y, "width": w, "height": h});
+        std::fs::write(out.with_extension("box.json"), cut.to_string())
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_value(shots).unwrap_or_default())
+    }
+
     fn set_scene_instruction(
         &self,
         feature: &str,
@@ -552,7 +581,7 @@ impl Host for CliHost {
             doc.version,
             self.dispatcher.spent_usd() - spent
         ));
-        // A manual written without an old one has picture slots: shoot them right away.
+        // Picture slots (a new manual's, or new screens added to an old one): shoot them right away.
         let slots = mwa_manual::document::picture_slots(&doc.html)
             .iter()
             .filter(|s| s.shot.is_none())
@@ -859,14 +888,21 @@ impl Host for CliHost {
         let (target, flags) = feature.split_once('?').unwrap_or((feature, ""));
         let world = flags.split('&').any(|f| f == "demo");
         let quick = flags.split('&').any(|f| f == "quick");
+        let explore = flags.split('&').any(|f| f == "explore");
         let (feature, only) = target
             .split_once('|')
             .map_or((target, None), |(f, i)| (f, Some(i)));
-        let result =
-            crate::capture_reference(&self.ws, &self.cfg, feature, world, only, quick, |l| {
-                progress(&l)
-            })
-            .await;
+        let result = crate::capture_reference(
+            &self.ws,
+            &self.cfg,
+            feature,
+            world,
+            only,
+            quick,
+            explore,
+            |l| progress(&l),
+        )
+        .await;
         self.capturing.store(false, Ordering::SeqCst);
         result
             .map(|s| vec![mwa_manual::reference::summarize(&s)])

@@ -326,6 +326,9 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .doc-body .status[data-status="red"] { --tone: var(--err); }
 .doc-figure { margin: 12px 0; padding: 8px; border: 1px dashed transparent; border-radius: 6px; }
 .doc-figure:hover, .doc-figure.sel { border-color: var(--line); }
+/* Pictures the old manual put side by side. */
+[data-in-row] { display: inline-block; vertical-align: top; margin-right: 1%; }
+.doc-figure.in-row .fig-img, .doc-figure.in-row .fig-img img { width: 100%; }
 .fig-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 6px; font-size: 12px; }
 .fig-tools .btn.small { padding: 2px 8px; font-size: 12px; }
 .fig-badge { padding: 1px 8px; border-radius: 10px; font-weight: 600; background: var(--panel-2); }
@@ -864,3 +867,14 @@ td.ok { color: var(--ok); } td.warn { color: var(--warn); }
 .wizard-form { display: flex; flex-direction: column; gap: 12px; max-width: 560px; }
 .wizard-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
 .wizard-form input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--fg); font-weight: 400; }
+
+.ref-changes { margin: 8px 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: #fffaf0; }
+.ref-changes summary { cursor: pointer; }
+.ref-changes ul { margin: 6px 0 0 18px; }
+.ref-changes li { margin: 4px 0; }
+
+.crop-modal { width: min(1200px, 94vw); max-height: 92vh; display: flex; flex-direction: column; }
+.crop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.crop-area { position: relative; overflow: auto; cursor: crosshair; }
+.crop-area img { display: block; width: 100%; user-select: none; }
+.crop-box { position: absolute; border: 2px solid #0c66e4; background: rgba(12, 102, 228, 0.08); pointer-events: none; }

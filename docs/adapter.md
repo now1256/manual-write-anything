@@ -72,8 +72,10 @@ login_path = "/api/auth/login"
 me_path = "/api/auth/me"
 logout_path = "/api/auth/logout"
 session_cookie = "acme_session"
+# 화면이 로그인할 때 보내는 JSON 본문의 키 이름. 반드시 로그인 호출 코드(body)에서 확인해 적습니다.
+# 다르면 제품이 형식 오류(400)로 거부하고, mwa는 계정 보호를 위해 그 계정의 자동 로그인을 멈춥니다.
 user_field = "userId"                         # 기본 "username"
-password_field = "password"
+password_field = "password"                   # 기본 "password"
 keepalive_paths = ["/api/auth/session/touch"] # 공유 서버에서도 허용하는 비-GET (세션 연장만)
 first_login_flag = "/isFirstLogin"            # JSON 포인터: true면 비밀번호 변경 필요
 error_title = "/message/title"
@@ -86,6 +88,7 @@ domain_storage_key = "acme:tenant"   # [capture] domain을 넣을 sessionStorage
 mask_buttons = ["사용자 메뉴"]         # 사진에서 가릴 버튼(접근성 이름)
 toast_selector = "[data-sonner-toast]"
 toast_type_attr = "data-type"
+read_posts = ["/api/reports/preview"] # 읽기만 하는 POST(미리보기·검색). 사람이 코드를 확인하고 넣음(자동 생성은 비워 둠). 이것 말고 비-GET은 모두 차단
 ```
 
 테스트용 가상 제품 전체는 `crates/productmap/tests/fixtures/mini/`에 있습니다.

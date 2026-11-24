@@ -104,6 +104,9 @@ enum Cmd {
         /// ref: 저장된 촬영 계획으로 한 번씩만 빠르게 찍습니다 (모델 호출·대조 없음)
         #[arg(long)]
         quick: bool,
+        /// ref: 못 찍은 장면을 모델이 화면을 보며 한 동작씩 찾아가 찍습니다 (--scene과 같이 쓰면 그 장면만)
+        #[arg(long)]
+        explore: bool,
         /// ref: 이 그림(img/...)의 장면만 다시 찍고 나머지 결과는 둡니다. doc: 이 그림 자리(블록 id)만 다시 찍습니다
         #[arg(long)]
         scene: Option<String>,
@@ -418,6 +421,7 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
             replan,
             scene,
             quick,
+            explore,
         } => {
             let cfg = load_config(cli_workspace)?;
             if what == "doc" {
@@ -440,6 +444,7 @@ async fn run_cmd(ws: &Path, cmd: Cmd) -> Result<ExitCode> {
                     world,
                     scene.as_deref(),
                     quick,
+                    explore,
                     |l| println!("{l}"),
                 )
                 .await?;
@@ -1385,6 +1390,36 @@ async fn auth(ws: &Path, action: AuthCmd) -> Result<ExitCode> {
 
 /// Logs in once with a stored profile and returns the session cookie pair.
 /// Never retries; a rejection blocks the profile until `mwa auth set` (D-019).
+/// Keeps the session alive while a long capture runs; stops when dropped.
+fn keep_alive(
+    auth: &mwa_capture::spec::AuthSpec,
+    base_url: &str,
+    cookie: &str,
+) -> Option<tokio_util_abort::AbortOnDrop> {
+    let path = auth.keepalive_paths.first()?.clone();
+    let (base_url, cookie) = (base_url.to_string(), cookie.to_string());
+    Some(tokio_util_abort::AbortOnDrop(tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(240));
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(e) = mwa_capture::login::touch(&base_url, &path, &cookie).await {
+                eprintln!("세션 연장 실패: {e}");
+            }
+        }
+    })))
+}
+
+mod tokio_util_abort {
+    /// Aborts the task when dropped.
+    pub struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
+    impl Drop for AbortOnDrop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+}
+
 async fn login_profile(
     auth: &mwa_capture::spec::AuthSpec,
     name: &str,
@@ -1430,7 +1465,9 @@ async fn login_profile(
             store.mark(&k, CredState::Broken, Some(note.clone()));
             store.save()?;
             anyhow::bail!(
-                "로그인 거부: {note}\n계정 잠금(하루 5회 실패)을 막으려고 이 프로파일의 자동 로그인을 중단했습니다. 재시도하지 않습니다"
+                "로그인 거부 (아이디 {}, {}): {note}\n계정 잠금(하루 5회 실패)을 막으려고 이 프로파일의 자동 로그인을 중단했습니다. 재시도하지 않습니다. 아이디·비밀번호를 고쳐 다시 저장하면 1번 더 시도합니다",
+                p.user_id,
+                p.base_url
             )
         }
         LoginOutcome::ServerError { status, message } => anyhow::bail!(
@@ -1490,6 +1527,7 @@ async fn capture_menus(
     };
     progress(format!("{} 로그인 1회 시도…", profile.user_id));
     let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let _alive = keep_alive(&spec.auth, &profile.base_url, &pair);
     let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
     let script = default_script();
     let job = capture_job(cap, &spec, profile, cookie, mocks)?;
@@ -1533,7 +1571,13 @@ fn capture_job(
         fixed_time: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis() as u64,
-        allow_non_get: spec.auth.keepalive_paths.clone(),
+        allow_non_get: spec
+            .auth
+            .keepalive_paths
+            .iter()
+            .chain(&spec.ui.read_posts)
+            .cloned()
+            .collect(),
         domain_storage_key: spec.ui.domain_storage_key.clone(),
         toast_selector: spec.ui.toast_selector.clone(),
         toast_type_attr: spec.ui.toast_type_attr.clone(),
@@ -1542,6 +1586,7 @@ fn capture_job(
         timeout_ms: 30_000,
         mocks,
         shots: Vec::new(),
+        explore: false,
     })
 }
 
@@ -1630,6 +1675,7 @@ async fn capture_detail(
 
     progress(format!("{} 로그인 1회 시도…", profile.user_id));
     let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let _alive = keep_alive(&spec.auth, &profile.base_url, &pair);
     let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
     let job = capture_job(cap, &spec, profile, cookie, mocks)?;
     let mut all_ok = true;
@@ -1744,6 +1790,7 @@ async fn capture_detail(
 /// Reproduces the old manual's scenes for one feature (D-031 ④) and judges every picture
 /// against the old one. A scene counts as reproduced only when the judge says so; anything
 /// the planner declares impossible, any failed step and any wrong screen is reported as such.
+#[allow(clippy::too_many_arguments)]
 async fn capture_reference(
     ws: &Path,
     cfg: &Config,
@@ -1751,6 +1798,7 @@ async fn capture_reference(
     world: bool,
     only: Option<&str>,
     quick: bool,
+    explore: bool,
     progress: impl Fn(String) + Send + Sync,
 ) -> Result<mwa_manual::reference::SceneShots> {
     use mwa_capture::detail::Sidecar;
@@ -1837,6 +1885,7 @@ async fn capture_reference(
 
     progress(format!("{} 로그인 1회 시도…", profile.user_id));
     let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let _alive = keep_alive(&spec.auth, &profile.base_url, &pair);
     let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
     let job = capture_job(cap, &spec, profile, cookie, mocks)?;
     let dir = format!("reference/{feature}");
@@ -1920,6 +1969,13 @@ async fn capture_reference(
                 records.iter().filter(|r| r.ok).count()
             ));
             return Ok(shots);
+        }
+        let routes: Vec<String> = f.screens.iter().map(|s| s.route.clone()).collect();
+        if explore {
+            return explore_failed(
+                &d, sc, &job, ws, &dir, feature, &doc, &ref_dir, &targets, &routes, only, &progress,
+            )
+            .await;
         }
         let pctx = planner_context(ws, &ctx, &w, f, sc, &job).await?;
         // A person's instruction for a scene goes with it to the planner (D-053).
@@ -2025,15 +2081,19 @@ async fn capture_reference(
                 scenes.push(shot);
                 continue;
             }
-            if !r.blocked.is_empty() {
+            // A screen that logs out on its way (a login page passed through) is not a write the
+            // scene needs: logout is always blocked and the picture is fine.
+            let writes: Vec<String> = r
+                .blocked
+                .iter()
+                .filter(|b| !b.url.ends_with(&spec.auth.logout_path))
+                .map(|b| format!("{} {}", b.method, b.url))
+                .collect();
+            if !writes.is_empty() {
                 shot.reason_kind = Some("needs_write".into());
                 shot.reason = Some(format!(
-                    "데모 응답이 없는 쓰기 요청을 막았습니다: {}",
-                    r.blocked
-                        .iter()
-                        .map(|b| format!("{} {}", b.method, b.url))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "쓰기 요청을 막았습니다: {}",
+                    writes.join(", ")
                 ));
             }
             shot.file = r.file.clone();
@@ -2082,6 +2142,14 @@ async fn capture_reference(
             reference::summarize(&shots),
             d.spent_usd()
         ));
+        // What a plan made up front could not reach, the explorer looks for on screen.
+        if shots.scenes.iter().any(|s| s.status == "failed") {
+            progress(format!("{feature}: 못 찍은 장면을 화면 보며 찾아갑니다"));
+            return explore_failed(
+                &d, sc, &job, ws, &dir, feature, &doc, &ref_dir, &targets, &routes, only, &progress,
+            )
+            .await;
+        }
         Ok(shots)
     }
     .await;
@@ -2149,6 +2217,7 @@ async fn capture_doc(
 
     progress(format!("{} 로그인 1회 시도…", profile.user_id));
     let pair = login_profile(&spec.auth, &cap.profile, profile).await?;
+    let _alive = keep_alive(&spec.auth, &profile.base_url, &pair);
     let cookie = Cookie::from_pair(&pair).context("세션 쿠키 형식이 올바르지 않습니다")?;
     let job = capture_job(cap, &spec, profile, cookie, mocks)?;
     let dir = format!("doc/{feature}");
@@ -2176,7 +2245,7 @@ async fn capture_doc(
             &progress,
         )
         .await?;
-        let results: Vec<(String, std::result::Result<String, String>)> = slots
+        let mut results: Vec<(String, std::result::Result<String, String>)> = slots
             .iter()
             .map(|s| {
                 let r = if let Some(why) = shot.infeasible.get(&s.bid) {
@@ -2201,6 +2270,42 @@ async fn capture_doc(
                 (s.bid.clone(), r)
             })
             .collect();
+        // What a plan made up front could not reach, the explorer looks for on screen (D-057),
+        // starting from the ways the old manual's scenes were reached.
+        let routes: Vec<String> = f.screens.iter().map(|s| s.route.clone()).collect();
+        let start = routes
+            .iter()
+            .find(|r| !r.contains('{'))
+            .cloned()
+            .unwrap_or_else(|| "/".into());
+        let hints = known_ways(reference::load_scene_shots(ws, feature).as_ref());
+        let facts = mwa_manual::pipeline::load_run(ws, feature)
+            .map(|r| r.facts)
+            .unwrap_or_default();
+        for (s, todo) in slots.iter().zip(&todos) {
+            let Some(r) = results.iter_mut().find(|(b, r)| *b == s.bid && r.is_err()) else {
+                continue;
+            };
+            progress(format!(
+                "{feature}: 그림 자리 {} 화면 보며 찾아가는 중",
+                s.bid
+            ));
+            match explore_scene(
+                &d, sc, &job, ws, &dir, todo, &start, None, &routes, &hints, &facts, &progress,
+            )
+            .await
+            {
+                Ok(found) => {
+                    if let Some(file) = found.file {
+                        r.1 = Ok(file);
+                    }
+                }
+                Err(e) => {
+                    progress(format!("{e:#}"));
+                    break;
+                }
+            }
+        }
         let doc = document::fill_slots(ws, feature, &results)?;
         let ok = results.iter().filter(|(_, r)| r.is_ok()).count();
         let mut lines = vec![format!(
@@ -2232,6 +2337,401 @@ struct ScenesShot {
     tries: std::collections::HashMap<String, Vec<mwa_manual::reference::Attempt>>,
 }
 
+/// The scenes not shot yet (or the one named), found by looking at the screen one move at a
+/// time; the moves that worked become the scene's plan (D-057).
+#[allow(clippy::too_many_arguments)]
+async fn explore_failed(
+    d: &Dispatcher,
+    sc: mwa_capture::detail::Sidecar<'_>,
+    job: &mwa_capture::shoot::Job,
+    ws: &Path,
+    dir: &str,
+    feature: &str,
+    doc: &mwa_manual::reference::RefDoc,
+    ref_dir: &Path,
+    targets: &[(usize, &mwa_manual::reference::RefImage)],
+    routes: &[String],
+    only: Option<&str>,
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> Result<mwa_manual::reference::SceneShots> {
+    use mwa_manual::reference::{self, SceneShot, SceneShots};
+    use mwa_manual::shotplan::{self, SceneTodo};
+    let id_of = |n: usize, img: &reference::RefImage| format!("p{}-{}", img.page, n + 1);
+    let saved = reference::load_scene_shots(ws, feature);
+    let mut hints = known_ways(saved.as_ref());
+    let facts = mwa_manual::pipeline::load_run(ws, feature)
+        .map(|r| r.facts)
+        .unwrap_or_default();
+    let start = routes
+        .iter()
+        .find(|r| !r.contains('{'))
+        .cloned()
+        .unwrap_or_else(|| "/".into());
+    for (n, img) in targets {
+        let before = saved
+            .as_ref()
+            .and_then(|s| s.scenes.iter().find(|x| x.image == img.file).cloned());
+        // Shot, or already explored without getting there: a run spends its budget on the
+        // rest (one scene can still be explored again by naming it).
+        let explored = |b: &SceneShot| {
+            b.attempts
+                .last()
+                .and_then(|a| a.error.as_deref())
+                .is_some_and(|e| e.starts_with(EXPLORED))
+        };
+        if only.is_none()
+            && before
+                .as_ref()
+                .is_some_and(|b| b.status != "failed" || explored(b))
+        {
+            continue;
+        }
+        let id = id_of(*n, img);
+        let s = img.scene.as_ref().expect("filtered");
+        let what = format!("{} — {}", s.screen, s.state);
+        let instruction = before.as_ref().and_then(|b| b.instruction.clone());
+        let todo = SceneTodo {
+            id: id.clone(),
+            what: match &instruction {
+                Some(i) => format!("{what} [사람의 지시: {i}]"),
+                None => what.clone(),
+            },
+            how: s.how.clone(),
+            image: Some(ref_dir.join(&img.file)),
+        };
+        let path = before
+            .as_ref()
+            .and_then(|b| b.plan.as_ref().map(|p| p.path.clone()))
+            .unwrap_or_else(|| start.clone());
+        let ratio = (img.height > 0).then(|| f64::from(img.width) / f64::from(img.height));
+        progress(format!("{feature}: {id} 화면 보며 찾아가는 중"));
+        // One scene's trouble (a refused model call, a crashed browser) stays with that scene;
+        // only the run's budget stops the run.
+        let found = match explore_scene(
+            d, sc, job, ws, dir, &todo, &path, ratio, routes, &hints, &facts, progress,
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(e)
+                if e.chain().any(|c| {
+                    matches!(
+                        c.downcast_ref::<mwa_core::CoreError>(),
+                        Some(mwa_core::CoreError::BudgetExceeded { .. })
+                    ) || matches!(
+                        c.downcast_ref::<mwa_manual::ManualError>(),
+                        Some(mwa_manual::ManualError::Core(
+                            mwa_core::CoreError::BudgetExceeded { .. }
+                        ))
+                    )
+                }) =>
+            {
+                progress(format!("{e:#}"));
+                break;
+            }
+            Err(e) => Explored {
+                file: None,
+                plan: mwa_capture::detail::Plan {
+                    todo: id.clone(),
+                    what: what.clone(),
+                    path: path.clone(),
+                    steps: Vec::new(),
+                    capture: "page".into(),
+                    region: Vec::new(),
+                    ratio,
+                },
+                log: Vec::new(),
+                blocked: Vec::new(),
+                reason_kind: "error".into(),
+                reason: format!("{e:#}"),
+            },
+        };
+        let mut shot = before.unwrap_or_else(|| SceneShot {
+            image: img.file.clone(),
+            page: img.page,
+            heading: img.heading.clone(),
+            what: what.clone(),
+            status: "failed".into(),
+            reason_kind: None,
+            reason: None,
+            differences: Vec::new(),
+            changes: Vec::new(),
+            file: None,
+            data: None,
+            plan: None,
+            attempts: Vec::new(),
+            blocked: Vec::new(),
+            mocked: Vec::new(),
+            uploaded: None,
+            choice: None,
+            instruction: None,
+        });
+        shot.attempts.push(reference::Attempt {
+            steps: found.log.clone(),
+            error: found
+                .file
+                .is_none()
+                .then(|| format!("{EXPLORED} {}", found.reason)),
+            fail_file: None,
+        });
+        shot.differences.clear();
+        shot.changes.clear();
+        match found.file {
+            None => {
+                shot.status = "failed".into();
+                shot.reason_kind = Some(found.reason_kind);
+                shot.reason = Some(found.reason);
+            }
+            Some(file) => {
+                shot.plan = Some(found.plan);
+                shot.file = Some(file.clone());
+                shot.reason_kind = None;
+                shot.reason = None;
+                shot.blocked = found.blocked;
+                progress(format!("{feature}: 대조 {id}"));
+                match shotplan::judge(d, &ref_dir.join(&img.file), &ws.join(&file), &what).await {
+                    Ok(v) => {
+                        shot.differences = v.differences;
+                        shot.changes = v.changes;
+                        shot.status = match v.verdict.as_str() {
+                            "same" => "reproduced",
+                            "different" => "different",
+                            _ => {
+                                shot.reason_kind = Some("wrong_screen".into());
+                                if let Some(a) = shot.attempts.last_mut() {
+                                    a.error = Some(format!("{EXPLORED} 다른 화면이 찍혔습니다"));
+                                }
+                                "failed"
+                            }
+                        }
+                        .into();
+                    }
+                    Err(e) => {
+                        shot.status = "different".into();
+                        shot.differences = vec![format!("대조 실패: {e}")];
+                    }
+                }
+            }
+        }
+        progress(format!(
+            "{feature}: {id} → {} ({} 동작)",
+            shot.status,
+            found.log.len()
+        ));
+        // Saved scene by scene: a run stopped by the budget keeps what it found.
+        let shots = reference::merge_scene_shots(
+            ws,
+            SceneShots {
+                feature: feature.to_string(),
+                doc: doc.id.clone(),
+                taken_at: job.fixed_time / 1000,
+                scenes: vec![shot],
+            },
+        );
+        reference::save_scene_shots(ws, &shots)?;
+        hints = known_ways(Some(&shots));
+    }
+    let shots = reference::load_scene_shots(ws, feature).context("장면 결과를 읽지 못했습니다")?;
+    progress(format!(
+        "{feature}: {} · 사용량 정가 환산 ${:.3}",
+        reference::summarize(&shots),
+        d.spent_usd()
+    ));
+    Ok(shots)
+}
+
+/// Ways already found to scenes of a feature, for the explorer: most scenes go through the
+/// same wizard.
+fn known_ways(saved: Option<&mwa_manual::reference::SceneShots>) -> String {
+    let Some(saved) = saved else {
+        return String::new();
+    };
+    saved
+        .scenes
+        .iter()
+        .filter(|s| s.status != "failed")
+        .filter_map(|s| {
+            let p = s.plan.as_ref().filter(|p| !p.steps.is_empty())?;
+            let steps: Vec<String> = p
+                .steps
+                .iter()
+                .map(|t| {
+                    let v = if t.value.is_empty() {
+                        String::new()
+                    } else {
+                        format!("={}", t.value)
+                    };
+                    format!("{} {} '{}'{v}", t.action, t.role, t.name)
+                })
+                .collect();
+            Some(format!("- {} ({}): {}", s.what, p.path, steps.join(" → ")))
+        })
+        .take(12)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What exploring one scene came to.
+struct Explored {
+    /// The picture (relative to the workspace) when the screen was reached.
+    file: Option<String>,
+    /// The moves that worked, replayable without a model.
+    plan: mwa_capture::detail::Plan,
+    /// Every move tried, shown as "어디서 안 됐나".
+    log: Vec<mwa_manual::reference::StepTrace>,
+    blocked: Vec<String>,
+    reason_kind: String,
+    reason: String,
+}
+
+/// Marks an attempt made by exploring, so a later run does not explore the same scene again.
+const EXPLORED: &str = "[화면 보며 찾기]";
+
+/// Most moves one scene may take before it is given up.
+const EXPLORE_MOVES: usize = 25;
+
+/// Reaches a scene by looking at the screen one move at a time (D-057).
+#[allow(clippy::too_many_arguments)]
+async fn explore_scene(
+    d: &Dispatcher,
+    sc: mwa_capture::detail::Sidecar<'_>,
+    job: &mwa_capture::shoot::Job,
+    ws: &Path,
+    dir: &str,
+    todo: &mwa_manual::shotplan::SceneTodo,
+    path: &str,
+    ratio: Option<f64>,
+    routes: &[String],
+    hints: &str,
+    facts: &[mwa_manual::model::Fact],
+    progress: &(dyn Fn(String) + Send + Sync),
+) -> Result<Explored> {
+    use mwa_capture::explore::Session;
+    use mwa_manual::reference::StepTrace;
+    let looks = ws.join(format!(".mwa/shots/explore-{}", job.fixed_time));
+    std::fs::create_dir_all(&looks)?;
+    let look = |n: usize| looks.join(format!("{}-{n}.png", todo.id));
+    let mut plan = mwa_capture::detail::Plan {
+        todo: todo.id.clone(),
+        what: todo.what.clone(),
+        path: path.to_string(),
+        steps: Vec::new(),
+        capture: "page".into(),
+        region: Vec::new(),
+        ratio,
+    };
+    let mut out = Explored {
+        file: None,
+        plan: plan.clone(),
+        log: Vec::new(),
+        blocked: Vec::new(),
+        reason_kind: "error".into(),
+        reason: format!("{EXPLORE_MOVES}번 움직여도 장면에 닿지 못했습니다"),
+    };
+    let rules = mwa_manual::shotplan::related_facts(facts, &todo.what, 15);
+    let mut session = Session::start(sc, job).await?;
+    let mut obs = session.open(path, Some(&look(0))).await?;
+    let mut history: Vec<String> = Vec::new();
+    if !obs.ok {
+        out.reason = obs.error.unwrap_or_default();
+        session.end().await;
+        return Ok(out);
+    }
+    for n in 1..=EXPLORE_MOVES {
+        let m = mwa_manual::shotplan::next_move(
+            d,
+            todo,
+            routes,
+            hints,
+            &rules,
+            &history,
+            &obs.url,
+            &obs.aria,
+            obs.look.as_deref(),
+        )
+        .await?;
+        progress(format!("  {} #{n} {}: {}", todo.id, m.kind, m.thought));
+        match m.kind.as_str() {
+            "shoot" => {
+                let file = format!("shots/{dir}/{}.png", todo.id);
+                std::fs::create_dir_all(ws.join(format!("shots/{dir}")))?;
+                let shot = session
+                    .shot(&ws.join(&file), &m.capture, &m.region, ratio)
+                    .await?;
+                if shot.ok {
+                    plan.capture = m.capture;
+                    plan.region = m.region;
+                    out.file = Some(file);
+                } else {
+                    out.reason = shot.error.unwrap_or_default();
+                }
+                break;
+            }
+            "give_up" => {
+                out.reason_kind = if m.reason_kind.is_empty() {
+                    "other".into()
+                } else {
+                    m.reason_kind
+                };
+                out.reason = m.reason;
+                break;
+            }
+            _ => {
+                let t0 = std::time::Instant::now();
+                obs = session.step(&m.step, Some(&look(n))).await?;
+                let what = format!(
+                    "{} {} '{}'{}",
+                    m.step.action,
+                    m.step.role,
+                    m.step.name,
+                    if m.step.value.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" = {}", m.step.value)
+                    }
+                );
+                out.blocked.extend(
+                    obs.blocked
+                        .iter()
+                        .map(|b| format!("{} {}", b.method, b.url)),
+                );
+                out.log.push(StepTrace {
+                    text: what.clone(),
+                    ok: Some(obs.ok),
+                    ms: t0.elapsed().as_millis() as u64,
+                    error: obs.error.clone(),
+                });
+                // A write the screen tried is stopped before the server, which the screen shows
+                // as a network error; said plainly, the model takes another way at once.
+                let stopped = if obs.blocked.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " (화면이 보낸 쓰기 요청 {}을 mwa가 막았습니다: 이 길은 서버 변경이 필요해 갈 수 없습니다)",
+                        obs.blocked
+                            .iter()
+                            .map(|b| format!("{} {}", b.method, b.url))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                if obs.ok {
+                    plan.steps.push(m.step);
+                    history.push(format!("{n}. {what} → 됨{stopped}"));
+                } else {
+                    history.push(format!(
+                        "{n}. {what} → 실패: {}{stopped}",
+                        obs.error.clone().unwrap_or_default()
+                    ));
+                }
+            }
+        }
+    }
+    session.end().await;
+    out.plan = plan;
+    Ok(out)
+}
+
 /// Plans the scenes (8 per model call), shoots them, and fixes the plans of failed ones twice.
 #[allow(clippy::too_many_arguments)]
 async fn shoot_scenes(
@@ -2261,11 +2761,17 @@ async fn shoot_scenes(
     let mut plans = Vec::new();
     for (mut p, why) in planned {
         p.ratio = ratio_of(&p.todo);
-        match why {
-            Some(w) => {
-                infeasible.insert(p.todo.clone(), w);
-            }
-            None => plans.push(p),
+        // The planner sees only each page's first screen, so "no such data" is often a guess:
+        // a scene it doubts is still tried when it planned steps (writes stay blocked, so a try
+        // is safe), and is given up only if the tries fail too. Another account cannot be tried.
+        let tried = why
+            .as_ref()
+            .is_none_or(|w| w.kind != "account" && !p.steps.is_empty());
+        if let Some(w) = why {
+            infeasible.insert(p.todo.clone(), w);
+        }
+        if tried {
+            plans.push(p);
         }
     }
     // Every try per scene, shown to the user as "어디서 안 됐나".
@@ -2285,12 +2791,13 @@ async fn shoot_scenes(
             "{feature}: 실패 {}개 계획 수정 ({round}/2)",
             failed.len()
         ));
-        let mut fixed = Vec::new();
-        for &i in &failed {
+        // Asked together: one at a time, a run with many failures waited minutes for nothing.
+        let fixed: Vec<_> = futures::future::try_join_all(failed.iter().map(|&i| {
             let r = &records[i];
             let err = r.error.clone().unwrap_or_default();
-            fixed.push(shotplan::repair(d, pctx, &r.plan, &err, r.aria.as_deref()).await?);
-        }
+            async move { shotplan::repair(d, pctx, &r.plan, &err, r.aria.as_deref()).await }
+        }))
+        .await?;
         let again = detail::shoot(sc, job, ws, dir, &fixed, 2, progress).await?;
         for (i, r) in failed.into_iter().zip(again) {
             tries
@@ -2305,6 +2812,17 @@ async fn shoot_scenes(
             .entry(r.plan.todo.clone())
             .or_default()
             .push(reference::attempt_of(r));
+        // A doubted scene that worked is judged like any other; one that failed keeps the
+        // planner's reason with what the try ran into.
+        if r.ok {
+            infeasible.remove(&r.plan.todo);
+        } else if let Some(w) = infeasible.get_mut(&r.plan.todo) {
+            w.reason = format!(
+                "{} (시도해 봤지만 실패: {})",
+                w.reason,
+                r.error.clone().unwrap_or_default()
+            );
+        }
     }
 
     Ok(ScenesShot {

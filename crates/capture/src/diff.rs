@@ -51,6 +51,24 @@ pub fn dimensions(p: &Path) -> Option<(u32, u32)> {
 /// a margin. The background is the bottom row's most common colour; a row is empty when nearly
 /// all of it (borders and the page beside a drawer aside) is that colour. Returns whether the
 /// picture changed.
+/// Cuts `out` from `full` (pixels of the whole-screen picture), clamped to the picture.
+pub fn crop(
+    full: &Path,
+    out: &Path,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+) -> Result<(), image::ImageError> {
+    let img = image::open(full)?;
+    let (fw, fh) = (img.width(), img.height());
+    let x = x.min(fw.saturating_sub(1));
+    let y = y.min(fh.saturating_sub(1));
+    let w = w.clamp(1, fw - x);
+    let h = h.clamp(1, fh - y);
+    img.crop_imm(x, y, w, h).save(out)
+}
+
 pub fn trim_bottom(path: &Path, margin: u32) -> Result<bool, image::ImageError> {
     let img = image::open(path)?.to_rgba8();
     let (w, h) = img.dimensions();

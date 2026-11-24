@@ -1699,6 +1699,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "clap",
+ "futures",
  "mwa-backends",
  "mwa-capture",
  "mwa-core",

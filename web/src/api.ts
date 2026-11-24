@@ -656,6 +656,10 @@ export const sshKey = () => postJson<{ public_key: string }>("/api/sources/probe
 export const setSceneInstruction = (feature: string, image: string, instruction: string | null) =>
   postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/instruction`, { image, instruction });
 
+/** Cuts a scene's picture again from the whole screen saved with it (pixels of that screen). */
+export const recropScene = (feature: string, image: string, cut: [number, number, number, number]) =>
+  postJson<SceneShots>(`/api/references/shots/${encodeURIComponent(feature)}/crop`, { image, cut });
+
 export const linkReference = (feature: string, id: string) => postJson<{ ok: boolean }>("/api/references/link", { feature, id });
 
 /** Uploads a PDF to the engine's project and links it to the feature. */

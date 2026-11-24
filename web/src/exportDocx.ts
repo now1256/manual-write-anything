@@ -211,11 +211,23 @@ async function blocks(el: Element, ctx: Ctx, level = 0): Promise<(Paragraph | Ta
       );
       out.push(new Paragraph(""));
     } else if (tag === "FIGURE") {
-      const src = ctx.srcOf(child);
-      const width = Number(child.dataset.width) || null;
-      const img = src ? await picture(src, width) : null;
-      if (img) out.push(new Paragraph({ children: [img], alignment: AlignmentType.CENTER }));
-      const caption = child.querySelector("figcaption")?.textContent?.trim();
+      // Pictures side by side (one row) go into one line; the first of the row writes them all.
+      const row = child.dataset.row;
+      const prev = child.previousElementSibling as HTMLElement | null;
+      if (row && prev?.tagName === "FIGURE" && prev.dataset.row === row) continue;
+      const group = [child];
+      for (let n = child.nextElementSibling as HTMLElement | null; row && n?.tagName === "FIGURE" && n.dataset.row === row; n = n.nextElementSibling as HTMLElement | null) group.push(n);
+      const imgs: (ImageRun | TextRun)[] = [];
+      for (const f of group) {
+        const src = ctx.srcOf(f);
+        const img = src ? await picture(src, Number(f.dataset.width) || null) : null;
+        if (img) imgs.push(...(imgs.length ? [new TextRun("  ")] : []), img);
+      }
+      if (imgs.length) out.push(new Paragraph({ children: imgs, alignment: AlignmentType.CENTER }));
+      const caption = group
+        .map((f) => f.querySelector("figcaption")?.textContent?.trim())
+        .filter(Boolean)
+        .join(" / ");
       if (caption) out.push(new Paragraph({ children: [new TextRun({ text: caption, italics: true, color: "626F86" })], alignment: AlignmentType.CENTER }));
     } else if (tag === "BLOCKQUOTE") {
       for (const p of await blocks(child, ctx)) out.push(p);
